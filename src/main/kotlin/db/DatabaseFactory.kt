@@ -2,10 +2,7 @@ package db
 
 
 
-import Data.TherapistDetails
-import Data.UserPreferences
-import Data.UserProfile
-import Data.UserSignUpRequest
+import Data.*
 import kotlinx.coroutines.flow.combine
 import org.litote.kmongo.*
 import org.litote.kmongo.coroutine.CoroutineClient
@@ -39,5 +36,12 @@ object DatabaseFactory {
 
     fun getProfilesCollection(): CoroutineCollection<UserProfile> {
         return database.getCollection("profiles")  // Collection for UserProfile
+    }
+
+    fun getChatCollection(): CoroutineCollection<ChatMessage> {
+        return database.getCollection("chatMessages")
+    }
+    fun getConversationCollection(): CoroutineCollection<Conversation> {
+        return database.getCollection<Conversation>("conversations")
     }
 }

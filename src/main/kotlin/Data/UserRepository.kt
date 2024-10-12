@@ -3,9 +3,8 @@ package Data
 
 
 import db.DatabaseFactory
-import org.litote.kmongo.combine
-import org.litote.kmongo.eq
-import org.litote.kmongo.setValue
+import org.bson.conversions.Bson
+import org.litote.kmongo.*
 import org.litote.kmongo.coroutine.*
 
 class UserRepository {
@@ -23,8 +22,8 @@ class UserRepository {
         return try {
             usersCollection.findOne(UserSignUpRequest::username eq username)
         } catch (e: Exception) {
-            // Log the error if needed
-            null // Return null in case of an error
+            println("Error finding user: ${e.message}") // Or use a logging framework
+            null
         }
     }
 
@@ -68,4 +67,41 @@ class UserRepository {
         )
         return updateResult.wasAcknowledged()
     }
+
+
+
+    suspend fun searchTherapists(filters: SearchFilters): List<TherapistDetails> {
+        val query = mutableListOf<Bson>()
+
+        filters.specialties?.let {
+            query.add(TherapistDetails::specialty `in` it)
+        }
+        filters.cost?.let {
+            query.add(TherapistDetails::cost lte it)
+        }
+        filters.availability?.let {
+            query.add(TherapistDetails::availability eq it)
+        }
+        filters.gender?.let {
+            query.add(TherapistDetails::gender eq it)
+        }
+
+        return therapistDetailsCollection.find(and(query)).toList()
+    }
+
+    private val chatCollection = DatabaseFactory.getChatCollection()
+
+    suspend fun saveChatMessage(chatMessage: ChatMessage): Boolean {
+        val insertResult = chatCollection.insertOne(chatMessage)
+        return insertResult.wasAcknowledged()
+    }
+
+    suspend fun getChatHistory(userId: String): List<ChatMessage> {
+        return chatCollection.find(or(ChatMessage::senderId eq userId, ChatMessage::receiverId eq userId)).toList()
+    }
+
+
+
+
+
 }

@@ -38,14 +38,18 @@ data class Certificate(
 @Serializable
 data class TherapistDetails(
     @SerialName("_id")
-    val userId: String = ObjectId().toHexString(),// To link therapist-specific data to the user
+    val userId: String = ObjectId().toHexString(), // To link therapist-specific data to the user
     val certificate: Certificate?, // Path to the uploaded certificate
     val qualifications: String?, // Optional: Qualifications or certifications
-    val experience: Int?, //Optional: Years of experience
+    val experience: Int?, // Optional: Years of experience
     val specialty: String, // Therapist's specialty (e.g., anxiety, trauma, etc.)
     val clientTypes: List<String>, // Types of clients they work with (e.g., children, couples, families)
     val issuesTreated: List<String>, // Issues they work with (e.g., anxiety disorders, depression)
-    val treatmentApproaches: List<String> // How they treat patients (e.g., CBT, mindfulness, etc.)
+    val treatmentApproaches: List<String>, // Approaches they use in therapy (e.g., CBT, DBT)
+    val profilePicturePath: String? = null,
+    val cost: Double, // Cost of the therapy session
+    val availability: String, // Availability of the therapist
+    val gender: String // Gender of the therapist
 )
 
 

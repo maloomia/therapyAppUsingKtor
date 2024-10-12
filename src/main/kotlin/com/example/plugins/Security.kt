@@ -8,6 +8,8 @@ import io.ktor.server.auth.jwt.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 
+
+
 fun Application.configureSecurity() {
     install(Authentication) {
         jwt("jwt") {
@@ -23,18 +25,5 @@ fun Application.configureSecurity() {
             }
         }
     }
-
-    routing {
-        authenticate("jwt") {
-            get("/protected/route/basic") {
-                val principal = call.principal<UserIdPrincipal>()!!
-                call.respondText("Hello ${principal.name}")
-            }
-
-            get("/protected/route/form") {
-                val principal = call.principal<UserIdPrincipal>()!!
-                call.respondText("Hello ${principal.name}")
-            }
-        }
-    }
 }
+

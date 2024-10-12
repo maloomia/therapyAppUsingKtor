@@ -19,6 +19,10 @@ import kotlinx.serialization.decodeFromString
 import java.io.File
 import java.util.*
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.jsonObject
+
 
 val json = Json {
     ignoreUnknownKeys = true
@@ -152,7 +156,10 @@ fun Application.configureRouting() {
                     // Set therapist-specific details
                     therapistDetails = therapistDetails?.copy(
                         userId = userToStore.userId,
-                        certificate = certificate // Save the path to the certificate file
+                        certificate = certificate, // Save the path to the certificate file
+                        cost = therapistDetails!!.cost,
+                        availability = therapistDetails!!.availability,
+                        gender = therapistDetails!!.gender
                     )
                 } else {
                     // Set userId in preferences before saving
@@ -186,7 +193,6 @@ fun Application.configureRouting() {
                 call.respond(HttpStatusCode.InternalServerError, "Server error: ${e.message}")
             }
         }
-
 
         authenticate("jwt") {
             put("/profile/info") {
@@ -244,31 +250,77 @@ fun Application.configureRouting() {
                 }
             }
         }
-
-        put("/profile/therapistDetails") {
-            val user = call.principal<UserIdPrincipal>()
-            if (user == null) {
-                call.respond(HttpStatusCode.Unauthorized, "Not authenticated")
-                return@put
-            }
-
-            try {
-                val therapistDetails = call.receive<TherapistDetails>()
-                val userRepository = UserRepository()
-                val updatedSuccessfully = userRepository.updateTherapistDetails(user.name, therapistDetails)
-
-                if (updatedSuccessfully) {
-                    call.respond(HttpStatusCode.OK, "Therapist details updated successfully")
-                } else {
-                    call.respond(HttpStatusCode.InternalServerError, "Error updating therapist details")
+        authenticate("jwt") {
+            put("/profile/therapistDetails") {
+                log.info("Accessing therapist details")
+                val user = call.principal<UserIdPrincipal>()
+                if (user == null) {
+                    call.respond(HttpStatusCode.Unauthorized, "Not authenticated")
+                    return@put
                 }
-            } catch (e: ContentTransformationException) {
-                call.respond(HttpStatusCode.BadRequest, "Invalid therapist details format: ${e.message}")
-            } catch (e: Exception) {
-                call.respond(HttpStatusCode.InternalServerError, "Server error: ${e.message}")
+
+                val userId = user.name
+                val multipart = call.receiveMultipart()
+                var therapistDetails: TherapistDetails? = null
+                var userProfile: UserProfile? = null
+                var profilePictureFile: String? = null
+
+                val json = Json {
+                    ignoreUnknownKeys = true
+                }
+
+                try {
+                    multipart.forEachPart { part ->
+                        when (part) {
+                            is PartData.FormItem -> {
+                                when (part.name) {
+                                    "therapistDetails" -> {
+                                        val jsonString = part.value
+                                        val jsonObject = json.parseToJsonElement(jsonString).jsonObject
+                                        val modifiedJsonObject = jsonObject.toMutableMap().apply {
+                                            remove("certificate")
+                                        }
+                                        therapistDetails = json.decodeFromJsonElement(JsonObject(modifiedJsonObject))
+                                    }
+                                    "userProfile" -> userProfile = json.decodeFromString(part.value)
+                                }
+                            }
+                            is PartData.FileItem -> {
+                                if (part.name == "profilePicture") {
+                                    profilePictureFile = part.save(Constants.PROFILE_PICTURE_DIRECTORY)
+                                }
+                            }
+                            else -> Unit
+                        }
+                        part.dispose()
+                    }
+                } catch (ex: SerializationException) {
+                    call.respond(HttpStatusCode.BadRequest, "Invalid JSON format: ${ex.message}")
+                    return@put
+                } catch (ex: Exception) {
+                    call.respond(HttpStatusCode.InternalServerError, "Error processing request: ${ex.message}")
+                    return@put
+                }
+
+                if (therapistDetails == null || userProfile == null) {
+                    call.respond(HttpStatusCode.BadRequest, "Invalid therapist details or user profile")
+                    return@put
+                }
+
+                val userRepository = UserRepository()
+                val updatedTherapistDetails = therapistDetails!!.copy(userId = userId, profilePicturePath = profilePictureFile)
+                val updatedUserProfile = userProfile!!.copy(userId = userId, profilePicturePath = profilePictureFile)
+
+                val therapistUpdatedSuccessfully = userRepository.updateTherapistDetails(userId, updatedTherapistDetails)
+                val profileUpdatedSuccessfully = userRepository.updateUserProfile(userId, updatedUserProfile)
+
+                if (therapistUpdatedSuccessfully && profileUpdatedSuccessfully) {
+                    call.respond(HttpStatusCode.OK, "Therapist details and user profile updated successfully")
+                } else {
+                    call.respond(HttpStatusCode.InternalServerError, "Error updating therapist details or user profile")
+                }
             }
         }
-
         post("/login") {
             try {
                 val loginRequest = call.receive<LoginRequest>()
@@ -292,7 +344,7 @@ fun Application.configureRouting() {
                 // Generate JWT token
                 val token = JWT.create()
                     .withClaim("username", user.username)
-                    .withExpiresAt(Date(System.currentTimeMillis() + 60 * 60 * 1000)) // 1 hour expiration
+                    .withExpiresAt(Date(System.currentTimeMillis() + 24 * 60 * 1000)) // 1 hour expiration
                     .sign(Algorithm.HMAC256("your-secret-key"))
 
                 call.respond(HttpStatusCode.OK, mapOf("token" to token))
@@ -301,11 +353,103 @@ fun Application.configureRouting() {
                 call.respond(HttpStatusCode.InternalServerError, "Server error: ${e.message}")
             }
         }
-        authenticate("jwt") {
-            get("/secure") {
-                call.respondText("This is a secure endpoint")
+
+        post("/search/therapists") {
+            val filters = call.receive<SearchFilters>()
+            val userRepository = UserRepository()
+            val therapists = userRepository.searchTherapists(filters)
+            call.respond(HttpStatusCode.OK, therapists)
+        }
+
+
+                authenticate("jwt") {
+                    post("/chat/send") {
+                        val chatMessage = call.receive<ChatMessage>()
+                        val userRepository = UserRepository()
+                        userRepository.saveChatMessage(chatMessage)
+                        call.respond(HttpStatusCode.OK, "Message sent")
+                    }
+
+                    get("/chat/history/{userId}") {
+                        val userId = call.parameters["userId"]
+                        val userRepository = UserRepository()
+                        val chatHistory = userRepository.getChatHistory(userId!!)
+                        call.respond(HttpStatusCode.OK, chatHistory)
+                    }
+                }
+
+        post("/start-conversation") {
+            val userId = call.principal<UserIdPrincipal>()?.name ?: return@post call.respond(HttpStatusCode.Unauthorized, "Unauthorized")
+
+            // Receive the conversation request payload
+            val conversationRequest = call.receive<StartConversationRequest>()
+            val therapistId = conversationRequest.therapistId
+
+            // Call the repository to start the conversation
+            val conversationRepository = ConversationRepository()
+            val conversationId = conversationRepository.startConversation(userId, therapistId)
+
+            // Respond with the created or existing conversation ID
+            call.respond(HttpStatusCode.Created, mapOf("conversationId" to conversationId))
+        }
+
+
+
+        get("/conversation/{conversationId}") {
+            val conversationId = call.parameters["conversationId"]
+            if (conversationId == null) {
+                call.respond(HttpStatusCode.BadRequest, "Missing conversation ID")
+                return@get
+            }
+
+            val conversationRepository = ConversationRepository() // Create an instance of ConversationRepository
+            val conversation = conversationRepository.getConversation(conversationId)
+
+            if (conversation != null) {
+                call.respond(HttpStatusCode.OK, conversation)
+            } else {
+                call.respond(HttpStatusCode.NotFound, "Conversation not found")
             }
         }
+
+
+
+
+
+
+
+        authenticate("jwt") {
+            get("/secure") {
+                val principal = call.principal<UserIdPrincipal>()
+                if (principal != null) {
+                    call.respondText("This is a secure endpoint")
+                } else {
+                    call.respondText("Unauthorized", status = HttpStatusCode.Unauthorized)
+                }
+            }
+        }
+
+        authenticate("jwt") {
+            get("/protected/route/basic") {
+                val principal = call.principal<UserIdPrincipal>()!!
+                call.respondText("Hello ${principal.name}")
+            }
+
+            get("/protected/route/form") {
+                val principal = call.principal<UserIdPrincipal>()!!
+                call.respondText("Hello ${principal.name}")
+            }
+
+            get("/test/auth") {
+                val principal = call.principal<UserIdPrincipal>()
+                if (principal == null) {
+                    call.respond(HttpStatusCode.Unauthorized, "Not authenticated")
+                } else {
+                    call.respondText("Authenticated user: ${principal.name}")
+                }
+            }
+        }
+
 
         // Static plugin. Try to access `/static/index.html`
         staticResources("/static", "static")
