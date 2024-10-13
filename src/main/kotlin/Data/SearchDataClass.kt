@@ -1,9 +1,13 @@
 package Data
 
+import kotlinx.serialization.Serializable
+
+@Serializable
 data class SearchFilters(
-    val specialties: List<String>?,
-    val cost: Double?,
-    val availability: String?,
-    val gender: String?
+    val name: String? = null,
+    val specialties: List<String>?= null,
+    val cost: Double?= null,
+    val availability: String?= null,
+    val gender: String?= null
 )
 

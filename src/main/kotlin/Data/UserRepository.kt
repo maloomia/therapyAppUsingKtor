@@ -2,16 +2,21 @@ package Data
 
 
 
+import com.example.plugins.hashPassword
+import com.mongodb.client.model.Filters
 import db.DatabaseFactory
 import org.bson.conversions.Bson
 import org.litote.kmongo.*
 import org.litote.kmongo.coroutine.*
+import org.litote.kmongo.eq
+import org.litote.kmongo.setValue
 
 class UserRepository {
     private val usersCollection = DatabaseFactory.getUsersCollection()
     private val preferencesCollection = DatabaseFactory.getPreferencesCollection()
     private val therapistDetailsCollection = DatabaseFactory.getTherapistDetailsCollection()
     private val profilesCollection = DatabaseFactory.getProfilesCollection()  // Define profiles collection
+
 
     suspend fun createUser(user: UserSignUpRequest): Boolean {
         val insertResult = usersCollection.insertOne(user)
@@ -26,6 +31,24 @@ class UserRepository {
             null
         }
     }
+
+    suspend fun resetUserPassword(userId: String, newPassword: String): Boolean {
+        return try {
+            val hashedPassword = hashPassword(newPassword)
+            val updateResult = usersCollection.updateOne(
+                UserSignUpRequest::userId eq userId,
+                setValue(UserSignUpRequest::password, hashedPassword)
+            )
+            println("Modified count: ${updateResult.modifiedCount}")
+            updateResult.wasAcknowledged()
+        } catch (e: Exception) {
+            println("Error during password reset: ${e.message}")
+            false
+        }
+    }
+
+
+
 
 
     suspend fun createUserPreferences(preferences: UserPreferences): Boolean {
@@ -70,35 +93,58 @@ class UserRepository {
 
 
 
-    suspend fun searchTherapists(filters: SearchFilters): List<TherapistDetails> {
+
+    suspend fun searchTherapists(filters: SearchFilters): List<Map<String, Any?>> {
         val query = mutableListOf<Bson>()
 
+        // Apply the name filter if provided
+        filters.name?.let {
+            filters.name?.let {
+                query.add(UserSignUpRequest::name.regex(".*${it}.*", "i"))  // Case-insensitive search by name
+            } // Case-insensitive search by name
+        }
+
+        // Apply specialties filter if provided
         filters.specialties?.let {
             query.add(TherapistDetails::specialty `in` it)
         }
+
+        // Apply cost filter if provided
         filters.cost?.let {
             query.add(TherapistDetails::cost lte it)
         }
+
+        // Apply availability filter if provided
         filters.availability?.let {
             query.add(TherapistDetails::availability eq it)
         }
+
+        // Apply gender filter if provided
         filters.gender?.let {
             query.add(TherapistDetails::gender eq it)
         }
 
-        return therapistDetailsCollection.find(and(query)).toList()
+        // Execute the query and get the therapist details
+        val therapistsDetails = therapistDetailsCollection.find(and(query)).toList()
+
+        // Now, retrieve the associated name from the usersCollection
+        return therapistsDetails.map { therapist ->
+            val user = usersCollection.findOne(UserSignUpRequest::userId eq therapist.userId)
+
+            // Log the fetched user
+            println("Fetched user for userId ${therapist.userId}: $user")
+
+            mapOf(
+                "name" to user?.name,
+                "details" to therapist
+            )
+        }
     }
 
-    private val chatCollection = DatabaseFactory.getChatCollection()
 
-    suspend fun saveChatMessage(chatMessage: ChatMessage): Boolean {
-        val insertResult = chatCollection.insertOne(chatMessage)
-        return insertResult.wasAcknowledged()
-    }
 
-    suspend fun getChatHistory(userId: String): List<ChatMessage> {
-        return chatCollection.find(or(ChatMessage::senderId eq userId, ChatMessage::receiverId eq userId)).toList()
-    }
+
+
 
 
 

@@ -9,3 +9,9 @@ data class LoginRequest(
     val username: String,
     val password: String
 )
+
+@Serializable
+data class ResetPasswordRequest(
+    val userId: String,
+    val newPassword: String
+)

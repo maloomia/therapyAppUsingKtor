@@ -46,6 +46,10 @@ dependencies {
         implementation("ch.qos.logback:logback-classic:1.4.12")
     implementation("io.ktor:ktor-server-websockets:2.x.x")  // Replace 2.x.x with the latest version
 
+        implementation("org.litote.kmongo:kmongo-coroutine:4.3.0")   // Use the latest version of KMongo
+
+
+
 
 
 

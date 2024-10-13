@@ -17,6 +17,8 @@ object DatabaseFactory {
     lateinit var database: CoroutineDatabase
     lateinit var client: CoroutineClient
 
+
+
     fun init() {
         client = KMongo.createClient().coroutine
         database = client.getDatabase("therapyApp")  // Replace with your actual DB name

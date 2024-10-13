@@ -70,41 +70,8 @@ fun Application.module() {
         maxFrameSize = Long.MAX_VALUE
         masking = false
     }
-
-    // Configure WebSocket routes for chat
-    fun Application.configureChatWebSockets(chatRepository: ConversationRepository) {
-        routing {
-            val conversationRepository = ConversationRepository() // Create an instance of ConversationRepository
-
-            webSocket("/chat/{conversationId}") {  // Conversation ID passed as a parameter
-                val conversationId = call.parameters["conversationId"]
-                    ?: return@webSocket close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "Invalid conversation"))
-
-                val userId = call.principal<UserIdPrincipal>()?.name
-                    ?: return@webSocket close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "Unauthorized"))
-
-                // Fetch the conversation using conversationRepository instance
-                val conversation = conversationRepository.getConversation(conversationId)
-                    ?: return@webSocket close(CloseReason(CloseReason.Codes.CANNOT_ACCEPT, "Conversation not found"))
-
-                // Listen for incoming WebSocket messages
-                for (frame in incoming) {
-                    if (frame is Frame.Text) {
-                        val receivedText = frame.readText()
-
-                        // Decode the incoming message
-                        val newMessage = Json.decodeFromString<ChatMessage>(receivedText)
-
-                        // Add the message to the conversation and broadcast it to all participants
-                        conversationRepository.addMessageToConversation(conversationId, newMessage)
-                        outgoing.send(Frame.Text(Json.encodeToString(newMessage)))
-                    }
-                }
-            }
-
-        }
-    }
-
+    val conversationRepository = ConversationRepository() // Make sure you have the repository ready
+    configureChatWebSockets(conversationRepository)
 
     // Configure standard routing for the rest of the API
     configureRouting()

@@ -38,7 +38,8 @@ data class Certificate(
 @Serializable
 data class TherapistDetails(
     @SerialName("_id")
-    val userId: String = ObjectId().toHexString(), // To link therapist-specific data to the user
+    val userId: String = ObjectId().toHexString(),
+    // To link therapist-specific data to the user
     val certificate: Certificate?, // Path to the uploaded certificate
     val qualifications: String?, // Optional: Qualifications or certifications
     val experience: Int?, // Optional: Years of experience

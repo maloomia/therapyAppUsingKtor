@@ -14,14 +14,20 @@ import io.ktor.http.*
 import io.ktor.http.content.*
 import io.ktor.server.auth.*
 import io.ktor.server.request.*
+import io.ktor.server.websocket.*
+import io.ktor.websocket.*
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
 import java.io.File
 import java.util.*
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.jsonObject
+import org.litote.kmongo.eq
+import org.litote.kmongo.setValue
+
 
 
 val json = Json {
@@ -45,7 +51,6 @@ fun Application.configureRouting() {
         }
 
 
-
         // Import the Constants object
 
 
@@ -59,74 +64,57 @@ fun Application.configureRouting() {
                 var userProfile: UserProfile? = null
                 var profilePictureFile: String? = null
 
-                // Define the directory for certificate uploads using Constants
-                val directory = File(Constants.CERTIFICATE_IMAGE_DIRECTORY)
-                if (!directory.exists()) {
-                    directory.mkdirs() // Create the directory if it doesn't exist
-                }
-
-                val profilePictureDirectory = File(Constants.PROFILE_PICTURE_DIRECTORY)
-                if (!profilePictureDirectory.exists()) {
-                    profilePictureDirectory.mkdirs() // Create the directory if it doesn't exist
-                }
-
-                try {
-                    // Process multipart form data
-                    multipart.forEachPart { part ->
-                        when (part) {
-                            is PartData.FormItem -> {
-                                when (part.name) {
-                                    "userData" -> userRequest = json.decodeFromString(part.value)
-                                    "preferences" -> if (userRequest?.isTherapist == false) {
-                                        userPreferences = json.decodeFromString(part.value)
-                                    }
-                                    "profile" -> userProfile = json.decodeFromString(part.value)
-                                    "therapistDetails" -> therapistDetails = json.decodeFromString(part.value)
+                // Process multipart form data
+                multipart.forEachPart { part ->
+                    when (part) {
+                        is PartData.FormItem -> {
+                            when (part.name) {
+                                "userData" -> userRequest = json.decodeFromString(part.value)
+                                "preferences" -> if (userRequest?.isTherapist == false) {
+                                    userPreferences = json.decodeFromString(part.value)
                                 }
+
+                                "profile" -> userProfile = json.decodeFromString(part.value)
+                                "therapistDetails" -> therapistDetails = json.decodeFromString(part.value)
                             }
-                            is PartData.FileItem -> {
-                                // Handle certificate upload for therapists
-                                if (part.name == "certificate" && userRequest?.isTherapist == true) {
-                                    certificateFile = part.save(Constants.CERTIFICATE_IMAGE_DIRECTORY)
-                                }
-
-                                if (part.name == "profilePicture") {
-                                    profilePictureFile = part.save(Constants.PROFILE_PICTURE_DIRECTORY)
-                                }
-                            }
-                            else -> Unit
                         }
-                        part.dispose()
+
+                        is PartData.FileItem -> {
+                            // Handle certificate upload for therapists
+                            if (part.name == "certificate" && userRequest?.isTherapist == true) {
+                                certificateFile = part.save(Constants.CERTIFICATE_IMAGE_DIRECTORY)
+                            }
+
+                            if (part.name == "profilePicture") {
+                                profilePictureFile = part.save(Constants.PROFILE_PICTURE_DIRECTORY)
+                            }
+                        }
+
+                        else -> Unit
                     }
-                } catch (ex: Exception) {
-                    ex.printStackTrace()
-                    call.respond(HttpStatusCode.InternalServerError, "Error saving certificate file: ${ex.message}")
-                    return@post
+                    part.dispose()
                 }
 
                 // Check if mandatory fields are null
                 if (userRequest == null || userProfile == null) {
-                    log.error("Invalid signup data: userRequest: $userRequest, userPreferences: $userPreferences, userProfile: $userProfile")
                     call.respond(HttpStatusCode.BadRequest, "Invalid sign-up data")
                     return@post
                 }
 
+                // Handle non-therapists
                 if (userRequest!!.isTherapist == false && userPreferences == null) {
-                    log.error("Invalid signup data: userPreferences: $userPreferences")
-                    call.respond(HttpStatusCode.BadRequest, "Invalid sign-up data")
+                    call.respond(HttpStatusCode.BadRequest, "Invalid sign-up data for non-therapist")
                     return@post
                 }
 
                 // Validate password and confirm password
                 if (userRequest!!.password != userRequest!!.confirmPassword) {
-                    log.error("Passwords do not match: ${userRequest!!.password}, ${userRequest!!.confirmPassword}")
                     call.respond(HttpStatusCode.BadRequest, "Passwords do not match")
                     return@post
                 }
 
                 // Validate password strength (optional)
                 if (!isValidPassword(userRequest!!.password)) {
-                    log.error("Weak password: ${userRequest!!.password}")
                     call.respond(HttpStatusCode.BadRequest, "Password is too weak")
                     return@post
                 }
@@ -135,15 +123,20 @@ fun Application.configureRouting() {
                 val hashedPassword = hashPassword(userRequest!!.password)
 
                 // Create user instance with hashed password
-                val userToStore = userRequest!!.copy(password = hashedPassword, confirmPassword = null.toString()) // Do not store confirmPassword
+                val userToStore = userRequest!!.copy(password = hashedPassword, confirmPassword = null.toString())
 
                 // Set userId in preferences and profile before saving
-                val profileToStore = userProfile!!.copy(userId = userToStore.userId, profilePicturePath = profilePictureFile)
+                val profileToStore =
+                    userProfile!!.copy(userId = userToStore.userId, profilePicturePath = profilePictureFile)
 
-                // If the user is a therapist, handle therapist-specific details
+                // Save user data to repository
+                val userRepository = UserRepository()
+                userRepository.createUser(userToStore)
+                userRepository.createUserProfile(profileToStore)
+
+                // Handle therapist-specific details
                 if (userRequest!!.isTherapist) {
                     if (certificateFile == null) {
-                        log.error("Therapist must upload a certificate")
                         call.respond(HttpStatusCode.BadRequest, "Therapist must upload a certificate")
                         return@post
                     }
@@ -153,46 +146,25 @@ fun Application.configureRouting() {
                         uploadDate = Date().toString()
                     )
 
-                    // Set therapist-specific details
+                    // Update therapist-specific details
                     therapistDetails = therapistDetails?.copy(
                         userId = userToStore.userId,
-                        certificate = certificate, // Save the path to the certificate file
-                        cost = therapistDetails!!.cost,
-                        availability = therapistDetails!!.availability,
-                        gender = therapistDetails!!.gender
+                        certificate = certificate
                     )
+                    userRepository.createTherapistDetails(therapistDetails!!)
                 } else {
-                    // Set userId in preferences before saving
+                    // Handle user preferences for non-therapists
                     userPreferences = userPreferences!!.copy(userId = userToStore.userId)
+                    userRepository.createUserPreferences(userPreferences!!)
                 }
 
-                // Save user data to repository
-                val userRepository = UserRepository()
-                try {
-                    // Store the user, profile, and preferences
-                    userRepository.createUser(userToStore)
-                    userRepository.createUserProfile(profileToStore)
-
-                    if (!userRequest!!.isTherapist) {
-                        userRepository.createUserPreferences(userPreferences!!)
-                    }
-
-                    // If the user is a therapist, save therapist details
-                    if (userRequest!!.isTherapist && therapistDetails != null) {
-                        userRepository.createTherapistDetails(therapistDetails!!)
-                    }
-
-                    // Respond with success
-                    call.respond(HttpStatusCode.Created, "User signed up successfully")
-                } catch (e: Exception) {
-                    log.error("Error during signup process", e)
-                    call.respond(HttpStatusCode.InternalServerError, "Server error: ${e.message}")
-                }
+                // Respond with success
+                call.respond(HttpStatusCode.Created, "User signed up successfully")
             } catch (e: Exception) {
-                log.error("Error during signup process", e)
                 call.respond(HttpStatusCode.InternalServerError, "Server error: ${e.message}")
             }
         }
+
 
         authenticate("jwt") {
             put("/profile/info") {
@@ -215,11 +187,13 @@ fun Application.configureRouting() {
                                     updatedProfile = json.decodeFromString(part.value)
                                 }
                             }
+
                             is PartData.FileItem -> {
                                 if (part.name == "profilePicture") {
                                     profilePictureFile = part.save(Constants.PROFILE_PICTURE_DIRECTORY)
                                 }
                             }
+
                             else -> Unit
                         }
                         part.dispose()
@@ -282,14 +256,17 @@ fun Application.configureRouting() {
                                         }
                                         therapistDetails = json.decodeFromJsonElement(JsonObject(modifiedJsonObject))
                                     }
+
                                     "userProfile" -> userProfile = json.decodeFromString(part.value)
                                 }
                             }
+
                             is PartData.FileItem -> {
                                 if (part.name == "profilePicture") {
                                     profilePictureFile = part.save(Constants.PROFILE_PICTURE_DIRECTORY)
                                 }
                             }
+
                             else -> Unit
                         }
                         part.dispose()
@@ -308,10 +285,12 @@ fun Application.configureRouting() {
                 }
 
                 val userRepository = UserRepository()
-                val updatedTherapistDetails = therapistDetails!!.copy(userId = userId, profilePicturePath = profilePictureFile)
+                val updatedTherapistDetails =
+                    therapistDetails!!.copy(userId = userId, profilePicturePath = profilePictureFile)
                 val updatedUserProfile = userProfile!!.copy(userId = userId, profilePicturePath = profilePictureFile)
 
-                val therapistUpdatedSuccessfully = userRepository.updateTherapistDetails(userId, updatedTherapistDetails)
+                val therapistUpdatedSuccessfully =
+                    userRepository.updateTherapistDetails(userId, updatedTherapistDetails)
                 val profileUpdatedSuccessfully = userRepository.updateUserProfile(userId, updatedUserProfile)
 
                 if (therapistUpdatedSuccessfully && profileUpdatedSuccessfully) {
@@ -354,67 +333,225 @@ fun Application.configureRouting() {
             }
         }
 
-        post("/search/therapists") {
-            val filters = call.receive<SearchFilters>()
-            val userRepository = UserRepository()
-            val therapists = userRepository.searchTherapists(filters)
-            call.respond(HttpStatusCode.OK, therapists)
-        }
 
+        post("/reset-password") {
+            try {
+                // Receive the reset request
+                val resetRequest = call.receive<ResetPasswordRequest>()
+                val userRepository = UserRepository()
 
-                authenticate("jwt") {
-                    post("/chat/send") {
-                        val chatMessage = call.receive<ChatMessage>()
-                        val userRepository = UserRepository()
-                        userRepository.saveChatMessage(chatMessage)
-                        call.respond(HttpStatusCode.OK, "Message sent")
-                    }
+                // Call resetUserPassword to update the password in the database
+                val updated = userRepository.resetUserPassword(resetRequest.userId, resetRequest.newPassword)
 
-                    get("/chat/history/{userId}") {
-                        val userId = call.parameters["userId"]
-                        val userRepository = UserRepository()
-                        val chatHistory = userRepository.getChatHistory(userId!!)
-                        call.respond(HttpStatusCode.OK, chatHistory)
-                    }
+                if (updated) {
+                    call.respond(HttpStatusCode.OK, "Password reset successfully")
+                } else {
+                    call.respond(HttpStatusCode.InternalServerError, "Failed to reset password")
                 }
-
-        post("/start-conversation") {
-            val userId = call.principal<UserIdPrincipal>()?.name ?: return@post call.respond(HttpStatusCode.Unauthorized, "Unauthorized")
-
-            // Receive the conversation request payload
-            val conversationRequest = call.receive<StartConversationRequest>()
-            val therapistId = conversationRequest.therapistId
-
-            // Call the repository to start the conversation
-            val conversationRepository = ConversationRepository()
-            val conversationId = conversationRepository.startConversation(userId, therapistId)
-
-            // Respond with the created or existing conversation ID
-            call.respond(HttpStatusCode.Created, mapOf("conversationId" to conversationId))
+            } catch (e: Exception) {
+                call.respond(HttpStatusCode.BadRequest, "Error: ${e.message}")
+            }
         }
 
 
 
-        get("/conversation/{conversationId}") {
+
+        post("/search/therapists") {
+            try {
+                // Receive the filters from the request body
+                val filters = call.receive<SearchFilters>()
+                val userRepository = UserRepository()
+
+                // Search for therapists with the provided filters, but handle nulls in the filters
+                val therapists = userRepository.searchTherapists(filters)
+
+                // If no therapists are found, return a NotFound response
+                if (therapists.isEmpty()) {
+                    call.respond(HttpStatusCode.NotFound, "No therapists found matching your filters")
+                } else {
+                    // Otherwise, return the list of therapists
+                    call.respond(HttpStatusCode.OK, therapists)
+                }
+            } catch (e: Exception) {
+                // Handle any exceptions (such as invalid data, or server-side issues)
+                call.respond(HttpStatusCode.InternalServerError, "Error: ${e.message}")
+            }
+        }
+
+
+
+        post("/chat/send") {
+            // Authenticate the user
+            val userId = call.principal<UserIdPrincipal>()?.name ?: return@post call.respond(
+                HttpStatusCode.Unauthorized,
+                "Unauthorized"
+            )
+
+            // Receive the message payload
+            val chatMessage = try {
+                call.receive<ChatMessage>()
+            } catch (e: Exception) {
+                call.respond(HttpStatusCode.BadRequest, "Invalid message data")
+                return@post
+            }
+
+            // Ensure the message sender is valid (can be authenticated based on userId)
+            val senderId = chatMessage.senderId
+            val receiverId = chatMessage.receiverId
+
+            // Validate that the sender is either the user or therapist in the conversation
+            if (senderId != userId && receiverId != userId) {
+                return@post call.respond(HttpStatusCode.Unauthorized, "You are not authorized to send this message")
+            }
+
+            // Save the chat message to the conversation
+            val chatRepository = ConversationRepository()
+            val isMessageSaved = chatRepository.saveChatMessage(chatMessage)
+
+            if (isMessageSaved) {
+                call.respond(HttpStatusCode.OK, "Message sent successfully")
+            } else {
+                call.respond(HttpStatusCode.InternalServerError, "Failed to send message")
+            }
+        }
+
+
+        get("/chat/history/{conversationId}") {
             val conversationId = call.parameters["conversationId"]
             if (conversationId == null) {
                 call.respond(HttpStatusCode.BadRequest, "Missing conversation ID")
                 return@get
             }
 
-            val conversationRepository = ConversationRepository() // Create an instance of ConversationRepository
-            val conversation = conversationRepository.getConversation(conversationId)
+            val limit = call.request.queryParameters["limit"]?.toIntOrNull() ?: 50
+            val offset = call.request.queryParameters["offset"]?.toIntOrNull() ?: 0
 
-            if (conversation != null) {
-                call.respond(HttpStatusCode.OK, conversation)
+            val chatRepository = ConversationRepository()
+            val chatHistory = chatRepository.getChatHistory(conversationId, limit, offset)
+
+            if (chatHistory.isNotEmpty()) {
+                call.respond(HttpStatusCode.OK, chatHistory)
             } else {
-                call.respond(HttpStatusCode.NotFound, "Conversation not found")
+                call.respond(HttpStatusCode.NotFound, "No chat history found")
+            }
+        }
+
+        authenticate("jwt") {
+            post("/start-conversation") {
+                val userId = call.principal<UserIdPrincipal>()?.name
+                    ?: return@post call.respond(HttpStatusCode.Unauthorized, "Unauthorized")
+
+                // Receive the conversation request payload
+                val conversationRequest = try {
+                    call.receive<StartConversationRequest>()
+                } catch (e: Exception) {
+                    call.respond(HttpStatusCode.BadRequest, "Invalid request data")
+                    return@post
+                }
+
+                val therapistId = conversationRequest.therapistId
+
+                try {
+                    // Call the repository to start or retrieve the conversation
+                    val conversationRepository = ConversationRepository()
+                    val conversationId = conversationRepository.startConversation(userId, therapistId)
+
+                    // Respond with the created or existing conversation ID
+                    call.respond(HttpStatusCode.Created, mapOf("conversationId" to conversationId))
+                } catch (e: Exception) {
+                    call.respond(HttpStatusCode.InternalServerError, "Error: ${e.message}")
+                }
+            }
+        }
+
+
+
+        get("/chat/history/{conversationId}") {
+            val conversationId = call.parameters["conversationId"] ?: return@get call.respond(
+                HttpStatusCode.BadRequest,
+                "Missing conversation ID"
+            )
+
+            val limit = call.request.queryParameters["limit"]?.toInt() ?: 20  // Default limit
+            val offset = call.request.queryParameters["offset"]?.toInt() ?: 0  // Default offset
+
+            val chatRepository = ConversationRepository()
+            val chatHistory = chatRepository.getChatHistory(conversationId, limit, offset)
+
+            if (chatHistory.isNotEmpty()) {
+                call.respond(HttpStatusCode.OK, chatHistory)
+            } else {
+                call.respond(HttpStatusCode.NotFound, "No chat history found")
             }
         }
 
 
 
 
+        get("/chat/history/{userId}") {
+            val userId = call.parameters["userId"]
+            val limit = call.request.queryParameters["limit"]?.toInt() ?: 20
+            val offset = call.request.queryParameters["offset"]?.toInt() ?: 0
+
+            val chatRepository = ConversationRepository()
+            val chatHistory = chatRepository.getChatHistory(userId!!, limit, offset)
+            call.respond(HttpStatusCode.OK, chatHistory)
+        }
+
+
+
+        get("/conversations/{userId}") {
+            val userId =
+                call.parameters["userId"] ?: return@get call.respond(HttpStatusCode.BadRequest, "Missing user ID")
+
+            val conversationRepository = ConversationRepository()
+            val conversations = conversationRepository.getConversationsForUser(userId)
+
+            if (conversations.isNotEmpty()) {
+                call.respond(HttpStatusCode.OK, conversations)
+            } else {
+                call.respond(HttpStatusCode.NotFound, "No conversations found for user")
+            }
+        }
+
+
+
+        get("/chat/history/{conversationId}") {
+            val conversationId = call.parameters["conversationId"] ?: return@get call.respond(
+                HttpStatusCode.BadRequest,
+                "Missing conversation ID"
+            )
+            val limit = call.request.queryParameters["limit"]?.toIntOrNull() ?: 50 // Default limit
+            val offset = call.request.queryParameters["offset"]?.toIntOrNull() ?: 0 // Default offset
+
+            val conversationRepository = ConversationRepository()
+            val chatHistory = conversationRepository.getChatHistory(conversationId, limit, offset)
+
+            if (chatHistory.isNotEmpty()) {
+                call.respond(HttpStatusCode.OK, chatHistory)
+            } else {
+                call.respond(HttpStatusCode.NotFound, "No chat history found")
+            }
+        }
+
+        authenticate("jwt") {
+            post("/conversation/end/{conversationId}") {
+                val conversationId = call.parameters["conversationId"] ?: return@post call.respond(
+                    HttpStatusCode.BadRequest,
+                    "Missing conversation ID"
+                )
+
+                val conversationRepository = ConversationRepository()
+                val isEnded = conversationRepository.endConversation(conversationId)
+
+                if (isEnded) {
+                    call.respond(HttpStatusCode.OK, "Conversation ended successfully")
+                } else {
+                    call.respond(HttpStatusCode.InternalServerError, "Failed to end conversation")
+                }
+            }
+
+        }
 
 
 
