@@ -378,68 +378,12 @@ fun Application.configureRouting() {
             }
         }
 
-
-
-        post("/chat/send") {
-            // Authenticate the user
-            val userId = call.principal<UserIdPrincipal>()?.name ?: return@post call.respond(
-                HttpStatusCode.Unauthorized,
-                "Unauthorized"
-            )
-
-            // Receive the message payload
-            val chatMessage = try {
-                call.receive<ChatMessage>()
-            } catch (e: Exception) {
-                call.respond(HttpStatusCode.BadRequest, "Invalid message data")
-                return@post
-            }
-
-            // Ensure the message sender is valid (can be authenticated based on userId)
-            val senderId = chatMessage.senderId
-            val receiverId = chatMessage.receiverId
-
-            // Validate that the sender is either the user or therapist in the conversation
-            if (senderId != userId && receiverId != userId) {
-                return@post call.respond(HttpStatusCode.Unauthorized, "You are not authorized to send this message")
-            }
-
-            // Save the chat message to the conversation
-            val chatRepository = ConversationRepository()
-            val isMessageSaved = chatRepository.saveChatMessage(chatMessage)
-
-            if (isMessageSaved) {
-                call.respond(HttpStatusCode.OK, "Message sent successfully")
-            } else {
-                call.respond(HttpStatusCode.InternalServerError, "Failed to send message")
-            }
-        }
-
-
-        get("/chat/history/{conversationId}") {
-            val conversationId = call.parameters["conversationId"]
-            if (conversationId == null) {
-                call.respond(HttpStatusCode.BadRequest, "Missing conversation ID")
-                return@get
-            }
-
-            val limit = call.request.queryParameters["limit"]?.toIntOrNull() ?: 50
-            val offset = call.request.queryParameters["offset"]?.toIntOrNull() ?: 0
-
-            val chatRepository = ConversationRepository()
-            val chatHistory = chatRepository.getChatHistory(conversationId, limit, offset)
-
-            if (chatHistory.isNotEmpty()) {
-                call.respond(HttpStatusCode.OK, chatHistory)
-            } else {
-                call.respond(HttpStatusCode.NotFound, "No chat history found")
-            }
-        }
-
         authenticate("jwt") {
             post("/start-conversation") {
                 val userId = call.principal<UserIdPrincipal>()?.name
                     ?: return@post call.respond(HttpStatusCode.Unauthorized, "Unauthorized")
+
+                println("User ID (from token): $userId")  // Debug: Log the extracted userId
 
                 // Receive the conversation request payload
                 val conversationRequest = try {
@@ -450,6 +394,7 @@ fun Application.configureRouting() {
                 }
 
                 val therapistId = conversationRequest.therapistId
+                println("Therapist ID (from request): $therapistId")  // Debug: Log the therapistId
 
                 try {
                     // Call the repository to start or retrieve the conversation
@@ -457,46 +402,83 @@ fun Application.configureRouting() {
                     val conversationId = conversationRepository.startConversation(userId, therapistId)
 
                     // Respond with the created or existing conversation ID
-                    call.respond(HttpStatusCode.Created, mapOf("conversationId" to conversationId))
+                    if (conversationId != null) {
+                        call.respond(HttpStatusCode.Created, mapOf("conversationId" to conversationId))
+                    } else {
+                        call.respond(HttpStatusCode.InternalServerError, "Error: Conversation ID not created")
+                    }
                 } catch (e: Exception) {
+                    println("Error starting conversation: ${e.message}")  // Debug: Log any error
                     call.respond(HttpStatusCode.InternalServerError, "Error: ${e.message}")
+                }
+            }
+        }
+
+        authenticate("jwt") {
+            post("/chat/send") {
+                // Authenticate the user
+                val userId = call.principal<UserIdPrincipal>()?.name
+                if (userId == null) {
+                    log.error("JWT token not found or is invalid")
+                    call.respond(HttpStatusCode.Unauthorized, "Unauthorized")
+                    return@post
+                }
+
+                // Receive the message payload
+                val chatMessage = try {
+                    call.receive<ChatMessage>()
+                } catch (e: Exception) {
+                    call.respond(HttpStatusCode.BadRequest, "Invalid message data")
+                    return@post
+                }
+
+                // Ensure the message sender is valid (can be authenticated based on userId)
+                val senderId = chatMessage.senderId
+                val receiverId = chatMessage.receiverId
+
+                // Validate that the sender is either the user or therapist in the conversation
+                if (senderId != userId && receiverId != userId) {
+                    return@post call.respond(HttpStatusCode.Unauthorized, "You are not authorized to send this message")
+                }
+
+                // Save the chat message to the Chat collection (if needed)
+                val chatRepository = ConversationRepository()
+                val isMessageSaved = chatRepository.saveChatMessage(chatMessage)
+
+                // Append the message to the conversation's messages array in the Conversation collection
+                val conversationId = chatMessage.conversationId // Make sure conversationId is part of the ChatMessage
+                val isMessageAddedToConversation = chatRepository.addMessageToConversation(conversationId, chatMessage)
+
+                if (isMessageSaved && isMessageAddedToConversation) {
+                    call.respond(HttpStatusCode.OK, "Message sent successfully")
+                } else {
+                    call.respond(HttpStatusCode.InternalServerError, "Failed to send message")
                 }
             }
         }
 
 
 
-        get("/chat/history/{conversationId}") {
-            val conversationId = call.parameters["conversationId"] ?: return@get call.respond(
-                HttpStatusCode.BadRequest,
-                "Missing conversation ID"
-            )
-
-            val limit = call.request.queryParameters["limit"]?.toInt() ?: 20  // Default limit
-            val offset = call.request.queryParameters["offset"]?.toInt() ?: 0  // Default offset
-
-            val chatRepository = ConversationRepository()
-            val chatHistory = chatRepository.getChatHistory(conversationId, limit, offset)
-
-            if (chatHistory.isNotEmpty()) {
-                call.respond(HttpStatusCode.OK, chatHistory)
-            } else {
-                call.respond(HttpStatusCode.NotFound, "No chat history found")
-            }
-        }
 
 
 
 
-        get("/chat/history/{userId}") {
-            val userId = call.parameters["userId"]
-            val limit = call.request.queryParameters["limit"]?.toInt() ?: 20
-            val offset = call.request.queryParameters["offset"]?.toInt() ?: 0
 
-            val chatRepository = ConversationRepository()
-            val chatHistory = chatRepository.getChatHistory(userId!!, limit, offset)
-            call.respond(HttpStatusCode.OK, chatHistory)
-        }
+
+   authenticate ("jwt"){
+       get("/chat/history/{userId}") {
+           val userId = call.parameters["userId"]
+           val limit = call.request.queryParameters["limit"]?.toInt() ?: 20
+           val offset = call.request.queryParameters["offset"]?.toInt() ?: 0
+
+           val chatRepository = ConversationRepository()
+           val chatHistory = chatRepository.getChatHistory(userId!!, limit, offset)
+           call.respond(HttpStatusCode.OK, chatHistory)
+       }
+   }
+
+
+
 
 
 

@@ -70,6 +70,7 @@ fun Application.module() {
         maxFrameSize = Long.MAX_VALUE
         masking = false
     }
+
     val conversationRepository = ConversationRepository() // Make sure you have the repository ready
     configureChatWebSockets(conversationRepository)
 

@@ -6,6 +6,7 @@ import org.bson.types.ObjectId
 @Serializable
 data class ChatMessage(
     val messageId: String = ObjectId().toHexString(),
+    val conversationId: String,
     val senderId: String,    // ID of the sender
     val receiverId: String,  // ID of the receiver
     val content: String,     // Message content
