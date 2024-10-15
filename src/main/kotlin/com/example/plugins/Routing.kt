@@ -323,7 +323,7 @@ fun Application.configureRouting() {
                 // Generate JWT token
                 val token = JWT.create()
                     .withClaim("username", user.username)
-                    .withExpiresAt(Date(System.currentTimeMillis() + 24 * 60 * 1000)) // 1 hour expiration
+                    .withExpiresAt(Date(System.currentTimeMillis() +30L * 24 * 60 * 60 * 1000)) // 1 hour expiration
                     .sign(Algorithm.HMAC256("your-secret-key"))
 
                 call.respond(HttpStatusCode.OK, mapOf("token" to token))
@@ -535,6 +535,235 @@ fun Application.configureRouting() {
 
         }
 
+
+        val notesRepository = NotesRepository()
+
+        // Route to add a journal entry for clients
+        authenticate("jwt") {
+            post("/journal/entry") {
+                val userId = call.principal<UserIdPrincipal>()?.name
+                    ?: return@post call.respond(HttpStatusCode.Unauthorized, "Unauthorized")
+
+                try {
+                    // Receive the journal entry payload
+                    val journalEntry = call.receive<ClientJournalEntry>()
+
+                    // Add the userId to the journal entry
+                    val newJournalEntry = journalEntry.copy(userId = userId)
+
+                    // Save the journal entry using the NotesRepository
+                    val isAdded = notesRepository.addJournalEntry(newJournalEntry)
+
+                    if (isAdded) {
+                        call.respond(HttpStatusCode.Created, "Journal entry added successfully")
+                    } else {
+                        call.respond(HttpStatusCode.InternalServerError, "Failed to add journal entry")
+                    }
+                } catch (e: Exception) {
+                    // If any error occurs, log it and respond with a bad request
+                    log.error("Invalid journal entry data: ${e.message}")
+                    call.respond(HttpStatusCode.BadRequest, "Invalid journal entry data: ${e.message}")
+                    return@post
+                }
+            }
+
+            // Route to retrieve journal entries for clients
+            get("/journal/entries") {
+                val userId = call.principal<UserIdPrincipal>()?.name ?: return@get call.respond(
+                    HttpStatusCode.Unauthorized,
+                    "Unauthorized"
+                )
+
+                val journalEntries = notesRepository.getJournalEntries(userId)
+                call.respond(HttpStatusCode.OK, journalEntries)
+            }
+
+            // Route to add a therapist note
+            post("/therapist/note") {
+                val therapistId = call.principal<UserIdPrincipal>()?.name
+                    ?: return@post call.respond(HttpStatusCode.Unauthorized, "Unauthorized")
+
+                val therapistNote = try {
+                    call.receive<TherapistNote>()
+                } catch (e: SerializationException) {
+                    log.error("Invalid JSON format: ${e.message}")
+                    return@post call.respond(HttpStatusCode.BadRequest, "Invalid JSON format: ${e.message}")
+                } catch (e: Exception) {
+                    log.error("Invalid therapist note data: ${e.message}")
+                    return@post call.respond(HttpStatusCode.BadRequest, "Invalid therapist note data: ${e.message}")
+                }
+
+                // Ensure that personal notes are not included in this request
+                val newNote = therapistNote.copy(therapistId = therapistId)
+
+                // This may be a check to ensure that `diagnosis` and `generalNotes` are provided
+                if (therapistNote.diagnosis == null && therapistNote.generalNotes == null) {
+                    return@post call.respond(
+                        HttpStatusCode.BadRequest,
+                        "Either diagnosis or general notes must be provided."
+                    )
+                }
+
+                val isAdded = notesRepository.addTherapistNote(newNote)
+                if (isAdded) {
+                    call.respond(HttpStatusCode.Created, "Therapist note added successfully")
+                } else {
+                    call.respond(HttpStatusCode.InternalServerError, "Failed to add therapist note")
+                }
+            }
+            // Route to retrieve therapist notes related to a specific user
+            get("/therapist/notes/{userId}") {
+                val therapistId = call.principal<UserIdPrincipal>()?.name ?: return@get call.respond(
+                    HttpStatusCode.Unauthorized,
+                    "Unauthorized"
+                )
+                val userId =
+                    call.parameters["userId"] ?: return@get call.respond(HttpStatusCode.BadRequest, "Missing user ID")
+
+                val therapistNotes = notesRepository.getTherapistNotes(therapistId, userId)
+                call.respond(HttpStatusCode.OK, therapistNotes)
+            }
+
+            // Route to post a new personal note (not related to a client)
+            // Route to post a new personal note (not related to a client)
+            post("/therapist/note/personal") {
+                val therapistId = call.principal<UserIdPrincipal>()?.name
+                    ?: return@post call.respond(HttpStatusCode.Unauthorized, "Unauthorized")
+
+                try {
+                    // Receive the JSON request body
+                    val therapistNote = call.receive<TherapistNote>()
+
+                    // Check if personal notes are provided; if not, you can handle it as needed
+                    if (therapistNote.personalNotes.isNullOrEmpty()) {
+                        return@post call.respond(HttpStatusCode.BadRequest, "Personal notes must be provided if required.")
+                    }
+
+                    // Create a new personal note, ignoring userId
+                    val newPersonalNote = TherapistNote(
+                        therapistId = therapistId, // Use authenticated therapistId
+                        userId = null, // Explicitly set to null for personal notes
+                        diagnosis = therapistNote.diagnosis, // Optional
+                        generalNotes = therapistNote.generalNotes, // Optional
+                        personalNotes = therapistNote.personalNotes // Can be null
+                    )
+
+                    // Save the personal note
+                    val isAdded = notesRepository.addTherapistNote(newPersonalNote)
+                    if (isAdded) {
+                        call.respond(HttpStatusCode.Created, "Personal note added successfully")
+                    } else {
+                        call.respond(HttpStatusCode.InternalServerError, "Failed to add personal note")
+                    }
+                } catch (e: SerializationException) {
+                    log.error("Invalid JSON format: ${e.message}")
+                    call.respond(HttpStatusCode.BadRequest, "Invalid JSON format: ${e.message}")
+                } catch (e: Exception) {
+                    log.error("Invalid personal note data: ${e.message}")
+                    call.respond(HttpStatusCode.BadRequest, "Invalid personal note data: ${e.message}")
+                }
+            }
+            // Route to get personal notes for the therapist
+            get("/therapist/notes/personal") {
+                val therapistId = call.principal<UserIdPrincipal>()?.name
+                    ?: return@get call.respond(HttpStatusCode.Unauthorized, "Unauthorized")
+
+                val personalNotes = notesRepository.getPersonalNotes(therapistId)
+                call.respond(HttpStatusCode.OK, personalNotes)
+            }}
+
+
+        /*post("/appointments/book") {
+            try {
+                // Read the incoming request body as text first
+                val jsonData = call.receiveText() // Get raw JSON text
+                log.info("Received JSON data: $jsonData") // Log the raw JSON
+
+                // Now parse the JSON into the Appointment object
+                val appointment: Appointment = try {
+                    Json.decodeFromString<Appointment>(jsonData) // Decode using Kotlin Serialization
+                } catch (e: Exception) {
+                    log.error("Invalid appointment data: ${e.message}")
+                    call.respond(HttpStatusCode.BadRequest, "Invalid appointment data: ${e.message}")
+                    return@post
+                }
+
+                val sessionRepository = SessionRepository()
+
+                // Log the therapistId from the appointment request
+                log.info("Received appointment request for therapistId: ${appointment.therapistId}")
+
+                // Fetch therapist details
+                val therapistDetails = sessionRepository.getTherapistDetails(appointment.therapistId)
+
+                // Check if therapist details were found
+                if (therapistDetails == null) {
+                    log.error("Therapist not found with ID: ${appointment.therapistId}")
+                    call.respond(HttpStatusCode.NotFound, "Therapist not found.")
+                    return@post
+                }
+
+                // Log the therapist availability check
+                log.info("Checking therapist availability for ${therapistDetails.userId} on ${appointment.dateTime}")
+
+                // Check if the therapist is available at the requested time
+                if (!sessionRepository.isTherapistAvailable(therapistDetails.userId, appointment.dateTime)) {
+                    call.respond(HttpStatusCode.Conflict, "Therapist is not available at the requested time.")
+                    return@post
+                }
+
+                // Calculate the total cost based on the therapist's cost and the appointment duration
+                val totalCost = sessionRepository.calculateCost(therapistDetails.cost, appointment.duration)
+
+                // Create the new Appointment instance
+                val newAppointment = appointment.copy(
+                    totalCost = totalCost,
+                    status = "confirmed"
+                )
+
+                // Attempt to book the appointment
+                val isBooked = sessionRepository.bookAppointment(newAppointment)
+
+                // Respond based on the booking success
+                if (isBooked) {
+                    log.info("Appointment successfully booked for ${newAppointment.dateTime} with therapist ${therapistDetails.userId}")
+                    call.respondText("Appointment booked successfully for ${newAppointment.dateTime} at a cost of ${newAppointment.totalCost}")
+                } else {
+                    log.error("Failed to book appointment for ${newAppointment.dateTime}")
+                    call.respond(HttpStatusCode.InternalServerError, "Failed to book appointment.")
+                }
+            } catch (e: Exception) {
+                log.error("Error processing appointment booking: ${e.message}")
+                call.respond(HttpStatusCode.InternalServerError, "Server error: ${e.message}")
+            }
+        }*/
+
+
+
+
+        post("/book-session") {
+            val request = call.receive<BookSessionRequest>()
+            val sessionRepository = SessionRepository()
+            // Call the availability check
+            val isAvailable = sessionRepository.checkTherapistAvailability(request.therapistId, request.sessionDateTime, request.duration)
+
+            if (isAvailable) {
+                val newSession = TherapySession(
+                    clientId = request.clientId,
+                    therapistId = request.therapistId,
+                    sessionDateTime = request.sessionDateTime,
+                    duration = request.duration,
+                    status = SessionStatus.SCHEDULED,
+                    cost = request.cost
+                )
+                val sessionsCollection = DatabaseFactory.getSessionsCollection()
+                sessionsCollection.insertOne(newSession) // Save to the database
+
+                call.respond(HttpStatusCode.Created, newSession)
+            } else {
+                call.respond(HttpStatusCode.Conflict, "Therapist is not available at the requested time.")
+            }
+        }
 
 
         authenticate("jwt") {

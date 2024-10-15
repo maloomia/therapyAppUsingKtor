@@ -138,8 +138,14 @@ class UserRepository {
                 "name" to user?.name,
                 "details" to therapist
             )
-        }
-    }
+        }}
+
+
+
+
+
+
+
 
 
 

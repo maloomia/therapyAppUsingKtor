@@ -74,7 +74,7 @@ fun Application.module() {
     val conversationRepository = ConversationRepository() // Make sure you have the repository ready
     configureChatWebSockets(conversationRepository)
 
-    // Configure standard routing for the rest of the API
+
     configureRouting()
 
 

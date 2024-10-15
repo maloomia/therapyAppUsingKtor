@@ -100,10 +100,10 @@ class ConversationRepository {
 
 
     suspend fun saveChatMessage(chatMessage: ChatMessage): Boolean {
-        val conversationId = chatMessage.conversationId  // Make sure you're passing the correct conversationId
+        val conversationId = chatMessage.conversationId  // Ensure correct conversationId is passed
 
-        // Add the chat message to the chat collection (check if it exists before inserting)
-        val existingMessage = chatCollection.findOne(ChatMessage::conversationId eq conversationId, ChatMessage::content eq chatMessage.content)
+        // Check if the exact message already exists in the chat collection based on messageId or other unique fields
+        val existingMessage = chatCollection.findOne(ChatMessage::messageId eq chatMessage.messageId)
 
         if (existingMessage != null) {
             println("Message already exists in chatCollection with ID: ${chatMessage.messageId}")
@@ -113,7 +113,7 @@ class ConversationRepository {
         // Insert the new message into the chat collection
         val insertResult = chatCollection.insertOne(chatMessage)
 
-        // After inserting into the chat collection, check if the conversation exists
+        // Check if the conversation exists before adding the message
         val existingConversation = conversationCollection.findOne(Conversation::conversationId eq conversationId)
 
         if (existingConversation == null) {
@@ -121,7 +121,7 @@ class ConversationRepository {
             return false
         }
 
-        // Add the message to the conversation's messages array
+        // Append the message to the conversation's messages array
         if (insertResult.wasAcknowledged()) {
             val updateResult = conversationCollection.updateOne(
                 Conversation::conversationId eq conversationId,
@@ -130,12 +130,9 @@ class ConversationRepository {
 
             return updateResult.modifiedCount > 0
         }
+
         return false
     }
-
-
-
-
 
 
 

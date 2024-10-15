@@ -46,4 +46,21 @@ object DatabaseFactory {
     fun getConversationCollection(): CoroutineCollection<Conversation> {
         return database.getCollection<Conversation>("conversations")
     }
+
+    fun getJournalCollection(): CoroutineCollection<ClientJournalEntry> {
+        return database.getCollection("journalEntries")
+    }
+
+    fun getTherapistNotesCollection(): CoroutineCollection<TherapistNote> {
+        return database.getCollection("therapistNotes")
+    }
+
+   /* fun getAppointmentsCollection(): CoroutineCollection<Appointment> {
+        return database.getCollection("appointments") // Ensure this is set up in your DatabaseFactory
+    }*/
+
+    fun getSessionsCollection(): CoroutineCollection<TherapySession> {
+        return database.getCollection("sessions") // Ensure this is set up in your DatabaseFactory
+    }
+
 }
