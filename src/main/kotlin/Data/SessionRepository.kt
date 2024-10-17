@@ -1,11 +1,9 @@
 package Data
 
 import db.DatabaseFactory
+import org.bson.types.ObjectId
+import org.litote.kmongo.*
 
-import org.litote.kmongo.and
-import org.litote.kmongo.eq
-import org.litote.kmongo.gte
-import org.litote.kmongo.lt
 import java.time.Instant
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
@@ -13,6 +11,7 @@ import kotlin.time.Duration.Companion.minutes
 
 class SessionRepository {
 
+    private val sessionsCollection = DatabaseFactory.getSessionsCollection()
     // Method to check if a therapist is available at the requested time
    /* suspend fun isTherapistAvailable(therapistId: String, requestedTime: String): Boolean {
         val therapistCollection = DatabaseFactory.getTherapistDetailsCollection()
@@ -66,4 +65,39 @@ class SessionRepository {
     }
 
     // Additional methods related to session management*/
+
+    suspend fun getSessionById(sessionId: String): TherapySession? {
+        return try {
+            sessionsCollection.findOne(TherapySession::sessionId eq sessionId)
+        } catch (e: Exception) {
+            println("Invalid sessionId format: ${e.message}")
+            null
+        }
+    }
+
+
+
+
+    suspend fun cancelSession(sessionId: String): Boolean {
+        // Update the session status to CANCELLED
+        val result = sessionsCollection.updateOne(
+            TherapySession::sessionId eq sessionId,
+            setValue(TherapySession::status, SessionStatus.CANCELLED)
+        )
+
+        return result.matchedCount > 0  // Return true if a session was updated
+    }
+
+    suspend fun logCancellation(session: TherapySession) {
+        // Implementation for logging cancellation details (to a file, database, etc.)
+        println("Session ${session.sessionId} cancelled for client ${session.clientId} by therapist ${session.therapistId}.")
+    }
+
+
+    fun notifyTherapist(therapistId: String, sessionId: String) {
+        // Implementation to send notification (email, SMS, etc.)
+        println("Notified therapist $therapistId about the cancellation of session $sessionId.")
+    }
+    // Method to cancel a session (updates its status to CANCELED)
+
 }

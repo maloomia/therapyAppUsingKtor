@@ -38,6 +38,8 @@ enum class SessionStatus {
 
 @Serializable
 data class BookSessionRequest(
+    @SerialName("_id")
+    val sessionId: String= ObjectId().toHexString(), // Unique identifier for the session
     val clientId: String, // ID of the client
     val therapistId: String, // ID of the therapist
     val sessionDateTime: String, // Desired date and time for the session
@@ -45,3 +47,8 @@ data class BookSessionRequest(
     val cost: Double // Cost of the session
 )
 
+@Serializable
+data class CancelSessionRequest(
+    @SerialName("_id")
+    val sessionId: String, // Define a data class to receive the session ID
+)

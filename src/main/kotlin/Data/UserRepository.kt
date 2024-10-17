@@ -99,7 +99,7 @@ class UserRepository {
 
         // Apply the name filter if provided
         filters.name?.let {
-            filters.name?.let {
+            filters.name.let {
                 query.add(UserSignUpRequest::name.regex(".*${it}.*", "i"))  // Case-insensitive search by name
             } // Case-insensitive search by name
         }
@@ -140,6 +140,19 @@ class UserRepository {
             )
         }}
 
+
+        suspend fun getTherapistDetails(userId: String): TherapistDetails? {
+            println("Looking for therapist with userId: $userId")
+            val therapistCollection = DatabaseFactory.getTherapistDetailsCollection()
+            val therapist = therapistCollection.findOne(TherapistDetails::userId eq userId.trim())
+
+            if (therapist == null) {
+                println("No therapist found for userId: $userId")
+            } else {
+                println("Therapist found: ${therapist.userId}")
+            }
+            return therapist
+        }
 
 
 

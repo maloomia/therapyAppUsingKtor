@@ -8,6 +8,7 @@ import io.ktor.server.routing.*
 import at.favre.lib.crypto.bcrypt.BCrypt
 import com.auth0.jwt.JWT
 import com.auth0.jwt.algorithms.Algorithm
+import com.mongodb.client.model.Filters.eq
 
 import db.DatabaseFactory
 import io.ktor.http.*
@@ -25,7 +26,10 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.jsonObject
+import org.bson.types.ObjectId
 import org.litote.kmongo.eq
+import org.litote.kmongo.set
+import org.litote.kmongo.setTo
 import org.litote.kmongo.setValue
 
 
@@ -54,7 +58,7 @@ fun Application.configureRouting() {
         // Import the Constants object
 
 
-        post("/signup") {
+       /* post("/signup") {
             try {
                 val multipart = call.receiveMultipart()
                 var userRequest: UserSignUpRequest? = null
@@ -96,7 +100,7 @@ fun Application.configureRouting() {
                 }
 
                 // Check if mandatory fields are null
-                if (userRequest == null || userProfile == null) {
+                if (userRequest == null) {
                     call.respond(HttpStatusCode.BadRequest, "Invalid sign-up data")
                     return@post
                 }
@@ -125,14 +129,20 @@ fun Application.configureRouting() {
                 // Create user instance with hashed password
                 val userToStore = userRequest!!.copy(password = hashedPassword, confirmPassword = null.toString())
 
-                // Set userId in preferences and profile before saving
-                val profileToStore =
-                    userProfile!!.copy(userId = userToStore.userId, profilePicturePath = profilePictureFile)
-
-                // Save user data to repository
                 val userRepository = UserRepository()
                 userRepository.createUser(userToStore)
-                userRepository.createUserProfile(profileToStore)
+                // Set userId in preferences and profile before saving
+                if(userProfile != null)
+                {
+                   userProfile =
+                    userProfile!!.copy(userId = userToStore.userId, profilePicturePath = profilePictureFile)
+                    userRepository.createUserProfile(userProfile!!)
+                }
+
+
+                // Save user data to repository
+
+
 
                 // Handle therapist-specific details
                 if (userRequest!!.isTherapist) {
@@ -158,12 +168,86 @@ fun Application.configureRouting() {
                     userRepository.createUserPreferences(userPreferences!!)
                 }
 
+
                 // Respond with success
                 call.respond(HttpStatusCode.Created, "User signed up successfully")
             } catch (e: Exception) {
                 call.respond(HttpStatusCode.InternalServerError, "Server error: ${e.message}")
             }
+        }*/
+
+
+
+
+
+        post("/signup")
+        {
+            try {
+                val userRequest = call.receive<UserSignUpRequest>()
+
+
+                if (userRequest.password != userRequest.confirmPassword) {
+                    call.respond(HttpStatusCode.BadRequest, "Passwords do not match")
+                    return@post
+                }
+
+                if (!isValidPassword(userRequest.password)) {
+                    call.respond(HttpStatusCode.BadRequest, "Password is too weak")
+                    return@post
+                }
+
+                val hashedPassword = hashPassword(userRequest.password)
+
+                val userToStore = userRequest.copy(password = hashedPassword, confirmPassword = null.toString())
+
+                val userRepository = UserRepository()
+
+
+                val existingUser = userRepository.findByUsername(userToStore.username)
+                if (existingUser != null) {
+                    call.respond(HttpStatusCode.Conflict, "User with this username already exists")
+                    return@post
+                }
+
+                userRepository.createUser(userToStore)
+
+                val token = JWT.create()
+                    .withClaim("userId", userToStore.userId)
+                    .withClaim("username", userToStore.username)
+                    .withExpiresAt(Date(System.currentTimeMillis() + 30L * 24 * 60 * 60 * 1000)) // 1-month expiration
+                    .sign(Algorithm.HMAC256("your-secret-key"))
+
+                // Return the JWT token to the user
+                call.respond(HttpStatusCode.Created, mapOf("token" to token, "message" to "User signed up successfully"))
+
+                call.respond(HttpStatusCode.Created, "User signed up successfully")
+            } catch (e: Exception) {
+                call.respond(HttpStatusCode.InternalServerError, "Server error: ${e.message}")
+            }
+
+
         }
+
+       authenticate("jwt") {
+           post("/ClientPreferences") {
+               try {
+                   val userId = call.principal<UserIdPrincipal>()?.name
+                       ?: return@post call.respond(HttpStatusCode.Unauthorized, "Unauthorized")
+
+                   println("User ID (from token): $userId")
+
+                   var userPreferences = call.receive<UserPreferences>()
+                   userPreferences = userPreferences.copy(userId = userId)
+
+                   val userRepository = UserRepository()
+                   userRepository.createUserPreferences(userPreferences)
+                   call.respond(HttpStatusCode.Created, "User preferences saved successfully")
+               } catch (e: Exception) {
+                   call.respond(HttpStatusCode.InternalServerError, "Server error: ${e.message}")
+               }
+           }
+       }
+
 
 
         authenticate("jwt") {
@@ -216,6 +300,7 @@ fun Application.configureRouting() {
                 val profileToStore = updatedProfile!!.copy(userId = userId, profilePicturePath = profilePictureFile)
 
                 val updatedSuccessfully = userRepository.updateUserProfile(userId, profileToStore)
+
 
                 if (updatedSuccessfully) {
                     call.respond(HttpStatusCode.OK, "Profile updated successfully")
@@ -737,15 +822,14 @@ fun Application.configureRouting() {
                 call.respond(HttpStatusCode.InternalServerError, "Server error: ${e.message}")
             }
         }*/
-
-
-
-
+        // Booking route
         post("/book-session") {
             val request = call.receive<BookSessionRequest>()
             val sessionRepository = SessionRepository()
-            // Call the availability check
-            val isAvailable = sessionRepository.checkTherapistAvailability(request.therapistId, request.sessionDateTime, request.duration)
+
+            val isAvailable = sessionRepository.checkTherapistAvailability(
+                request.therapistId, request.sessionDateTime, request.duration
+            )
 
             if (isAvailable) {
                 val newSession = TherapySession(
@@ -756,14 +840,143 @@ fun Application.configureRouting() {
                     status = SessionStatus.SCHEDULED,
                     cost = request.cost
                 )
+
                 val sessionsCollection = DatabaseFactory.getSessionsCollection()
-                sessionsCollection.insertOne(newSession) // Save to the database
+                sessionsCollection.insertOne(newSession)
 
                 call.respond(HttpStatusCode.Created, newSession)
             } else {
                 call.respond(HttpStatusCode.Conflict, "Therapist is not available at the requested time.")
             }
         }
+
+// Cancellation route
+
+            authenticate("jwt") {
+                delete("/sessions/cancel") {
+                    try {
+                        // Receive the cancellation request
+                        val request = call.receive<CancelSessionRequest>()
+                        val sessionRepository = SessionRepository()
+
+                        // Check if the session exists
+                        val session = sessionRepository.getSessionById(request.sessionId)
+                        if (session == null) {
+                            call.respond(HttpStatusCode.NotFound, "Session not found.")
+                            return@delete
+                        }
+
+                        // Check session status
+                        if (session.status != SessionStatus.SCHEDULED) {
+                            call.respond(HttpStatusCode.Conflict, "Session cannot be canceled as it is already completed or canceled.")
+                            return@delete
+                        }
+
+                        // Attempt to cancel the session
+                        val isCanceled = sessionRepository.cancelSession(request.sessionId)
+                        if (isCanceled) {
+                            call.respond(HttpStatusCode.NoContent) // 204 No Content for successful delete
+                        } else {
+                            call.respond(HttpStatusCode.InternalServerError, "Failed to cancel session.")
+                        }
+                    } catch (e: Exception) {
+                        call.respond(HttpStatusCode.InternalServerError, "Server error: ${e.message}")
+                    }
+                }
+        }
+
+
+
+
+        /*post("/cancel-session") {
+            val request = call.receive<CancelSessionRequest>()
+            val sessionRepository = SessionRepository()
+
+            // Check if the session exists
+            val session = sessionRepository.getSessionById(request.sessionId)
+            if (session != null && session.status == SessionStatus.SCHEDULED) {
+                // Proceed with cancellation
+                val updatedSession = sessionRepository.cancelSession(request.sessionId)
+                call.respond(HttpStatusCode.OK, updatedSession)
+            } else {
+                call.respond(HttpStatusCode.NotFound, "Session not found or already canceled.")
+            }
+        }*/
+
+
+
+        delete("/cancel-session/{sessionId}") {
+            val sessionIdParam = call.parameters["sessionId"]
+
+            if (sessionIdParam != null) {
+                // Convert the string sessionId to ObjectId and handle potential errors
+                val sessionId = try {
+                    ObjectId(sessionIdParam)
+                } catch (e: IllegalArgumentException) {
+                    call.respond(HttpStatusCode.BadRequest, "Invalid session ID format.")
+                    return@delete
+                }
+
+                val sessionsCollection = DatabaseFactory.getSessionsCollection()
+
+                // Use explicit type for the delete operation
+                val deleteResult = sessionsCollection.deleteOne(eq("_id", sessionId))
+
+                // Log the result for debugging
+                println("Attempting to delete session with ID: $sessionIdParam")
+                println("Deleted count: ${deleteResult.deletedCount}")
+
+                if (deleteResult.deletedCount > 0) {
+                    call.respond(HttpStatusCode.NoContent) // 204 No Content if successfully deleted
+                } else {
+                    call.respond(HttpStatusCode.NotFound, "Session not found or already cancelled.")
+                }
+            } else {
+                call.respond(HttpStatusCode.BadRequest, "Session ID must be provided.")
+            }
+        }
+
+
+
+
+
+
+
+
+
+
+
+            put("/sessions/{sessionId}/cancel") {
+                // Get the session ID from the URL path parameters
+                val sessionIdParam = call.parameters["sessionId"]
+                    ?: return@put call.respond(HttpStatusCode.BadRequest, "Session ID is required.")
+
+                try {
+                    // Use sessionId directly (assuming it's a String)
+                    val sessionId = sessionIdParam
+
+                    val sessionRepository = SessionRepository()
+                    // Fetch the session by sessionId
+                   // val session = sessionRepository.getSessionById(sessionId)
+
+
+                    // Cancel the session (no session not found condition)
+                    val isCanceled = sessionRepository.cancelSession(sessionId)
+
+                    if (isCanceled) {
+                        // Respond with success if the session is canceled
+                        call.respond(HttpStatusCode.OK, "Session canceled successfully.")
+                    } else {
+                        // If canceling failed, return 500 Internal Server Error
+                        call.respond(HttpStatusCode.InternalServerError, "Failed to cancel session.")
+                    }
+                } catch (e: Exception) {
+                    // Handle invalid sessionId format or any other error
+                    println("Error: ${e.message}")
+                    call.respond(HttpStatusCode.BadRequest, "Invalid session ID format.")
+                }
+            }
+
 
 
         authenticate("jwt") {
