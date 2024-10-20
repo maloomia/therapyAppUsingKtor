@@ -18,5 +18,16 @@ class TherapistNoteRepository {
         return notesCollection.find(and(TherapistNote::userId eq userId, TherapistNote::therapistId eq therapistId)).toList()
     }
 
+    suspend fun getPersonalNotes(therapistId: String): List<TherapistNote> {
+        return notesCollection.find(and(TherapistNote::therapistId eq therapistId, TherapistNote::userId eq null)).toList()
+    }
+
+     suspend fun addTherapistNote(note: TherapistNote): Boolean {
+        val insertResult = notesCollection.insertOne(note)
+        return insertResult.wasAcknowledged()
+    }
+
+   
+
 
 }

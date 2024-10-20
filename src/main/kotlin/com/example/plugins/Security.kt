@@ -16,11 +16,12 @@ import io.ktor.server.auth.*
 fun Application.configureSecurity() {
     install(Authentication) {
         jwt("jwt") {
-            realm = "Access to the '/profile' path"
+            realm = "Access to protected routes"
             verifier(JWT.require(Algorithm.HMAC256("your-secret-key")).build())
             validate { credential ->
                 val userId = credential.payload.getClaim("userId").asString()
-                if (userId != null) {
+                val username = credential.payload.getClaim("username").asString()
+                if (userId != null && username != null) {
                     UserIdPrincipal(userId)
                 } else {
                     null
@@ -29,5 +30,6 @@ fun Application.configureSecurity() {
         }
     }
 }
+
 
 

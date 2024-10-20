@@ -11,3 +11,17 @@ data class SearchFilters(
     val gender: String?= null
 )
 
+@Serializable
+data class TherapistSearchResult(
+    val name: String,
+    val qualifications: String?,
+    val experience: Int?,
+    val specialty: String,
+    val clientTypes: List<String>,
+    val issuesTreated: List<String>,
+    val treatmentApproaches: List<String>,
+    val availability: List<Availability>,
+    val cost: Double,
+    val gender: String
+)
+

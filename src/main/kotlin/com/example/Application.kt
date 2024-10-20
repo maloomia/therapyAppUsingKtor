@@ -44,7 +44,7 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 fun main(args: Array<String>) {
-    embeddedServer(Netty, port = 8080) {
+    embeddedServer(Netty, port = 8080, host = "0.0.0.0") {
         module()  // This is where the application modules (routes, DB connection, etc.) are configured
     }.start(wait = true)
 }

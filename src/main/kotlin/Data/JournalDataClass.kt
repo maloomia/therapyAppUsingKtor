@@ -6,7 +6,7 @@ import org.bson.types.ObjectId
 @Serializable
 data class ClientJournalEntry(
     val entryId: String = ObjectId().toHexString(),
-    val userId: String,
+    val userId: String= "",
     val moodIcon: MoodIcon,
     val date: String,
     val hour: String,
@@ -28,7 +28,7 @@ data class TherapistNote(
     val userId: String?, // Nullable for some routes
     val diagnosis: String? = null, // Optional
     val generalNotes: String? = null, // Optional
-    val personalNotes: String? = null // Nullable to allow flexibility
+    val personalNotes: String? = null
 )
 
 
@@ -36,3 +36,5 @@ data class TherapistNote(
 enum class MoodIcon {
     HAPPY, SAD, ANGRY, NEUTRAL, ANXIOUS
 }
+
+

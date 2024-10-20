@@ -20,6 +20,7 @@ data class Conversation(
     val conversationId: String = ObjectId().toHexString(),
     val userId: String,       // ID of the user (non-therapist)
     val therapistId: String,  // ID of the therapist
+     val sessionId: String,
     val messages: MutableList<ChatMessage> = mutableListOf(), // List of messages in the conversation
     val isActive: Boolean = true // Field to track if the conversation is still active
 )
@@ -27,5 +28,13 @@ data class Conversation(
 
 @Serializable
 data class StartConversationRequest(
-    val therapistId: String // The ID of the therapist to start the conversation with
+    val therapistId: String, // The ID of the therapist to start the conversation with
+     val sessionId: String
+)
+
+data class ConversationEndRequest(
+    val reason: String? = null,
+    val summary: String? = null,
+    val followUpRequired: Boolean = false,
+    val endedBy: String? = null
 )

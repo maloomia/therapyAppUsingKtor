@@ -7,7 +7,6 @@ import org.litote.kmongo.*
 import java.time.Instant
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
-import kotlin.time.Duration.Companion.minutes
 
 class SessionRepository {
 
@@ -68,7 +67,7 @@ class SessionRepository {
 
     suspend fun getSessionById(sessionId: String): TherapySession? {
         return try {
-            sessionsCollection.findOne(TherapySession::sessionId eq sessionId)
+            sessionsCollection.findOneById(sessionId)
         } catch (e: Exception) {
             println("Invalid sessionId format: ${e.message}")
             null
@@ -80,8 +79,8 @@ class SessionRepository {
 
     suspend fun cancelSession(sessionId: String): Boolean {
         // Update the session status to CANCELLED
-        val result = sessionsCollection.updateOne(
-            TherapySession::sessionId eq sessionId,
+        val result = sessionsCollection.updateOneById(
+            sessionId,
             setValue(TherapySession::status, SessionStatus.CANCELLED)
         )
 
@@ -98,6 +97,22 @@ class SessionRepository {
         // Implementation to send notification (email, SMS, etc.)
         println("Notified therapist $therapistId about the cancellation of session $sessionId.")
     }
-    // Method to cancel a session (updates its status to CANCELED)
+    
+     suspend fun updatePaymentStatus(sessionId: String, status: PaymentStatus): Boolean {
+        val result = sessionsCollection.updateOneById(
+            sessionId,
+            setValue(TherapySession::paymentStatus, status)
+        )
+        return result.modifiedCount > 0
+    }
 
+    suspend fun isSessionPaidAndActive(sessionId: String): Boolean {
+        val session = getSessionById(sessionId)
+        return session?.paymentStatus == PaymentStatus.PAID && 
+               session.status == SessionStatus.SCHEDULED &&
+               Instant.parse(session.sessionDateTime).isBefore(Instant.now())
+    }
 }
+
+
+

@@ -1,6 +1,7 @@
 package com.example.plugins
 import Data.constants.Constants
 import Data.*
+import PaymentRepository
 import io.ktor.server.application.*
 import io.ktor.server.http.content.*
 import io.ktor.server.response.*
@@ -15,27 +16,17 @@ import io.ktor.http.*
 import io.ktor.http.content.*
 import io.ktor.server.auth.*
 import io.ktor.server.request.*
-import io.ktor.server.websocket.*
-import io.ktor.websocket.*
 import kotlinx.serialization.SerializationException
-import kotlinx.serialization.decodeFromString
-import kotlinx.serialization.encodeToString
-import java.io.File
 import java.util.*
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.decodeFromJsonElement
-import kotlinx.serialization.json.jsonObject
-import org.bson.types.ObjectId
-import org.litote.kmongo.eq
-import org.litote.kmongo.set
-import org.litote.kmongo.setTo
-import org.litote.kmongo.setValue
+import java.time.Instant
 
 
 
 val json = Json {
     ignoreUnknownKeys = true
+    isLenient = true
+    coerceInputValues = true
 }
 
 fun hashPassword(password: String): String {
@@ -58,7 +49,7 @@ fun Application.configureRouting() {
         // Import the Constants object
 
 
-       /* post("/signup") {
+        /* post("/signup") {
             try {
                 val multipart = call.receiveMultipart()
                 var userRequest: UserSignUpRequest? = null
@@ -185,12 +176,6 @@ fun Application.configureRouting() {
             try {
                 val userRequest = call.receive<UserSignUpRequest>()
 
-
-                if (userRequest.password != userRequest.confirmPassword) {
-                    call.respond(HttpStatusCode.BadRequest, "Passwords do not match")
-                    return@post
-                }
-
                 if (!isValidPassword(userRequest.password)) {
                     call.respond(HttpStatusCode.BadRequest, "Password is too weak")
                     return@post
@@ -198,7 +183,7 @@ fun Application.configureRouting() {
 
                 val hashedPassword = hashPassword(userRequest.password)
 
-                val userToStore = userRequest.copy(password = hashedPassword, confirmPassword = null.toString())
+                val userToStore = userRequest.copy(password = hashedPassword)
 
                 val userRepository = UserRepository()
 
@@ -218,7 +203,10 @@ fun Application.configureRouting() {
                     .sign(Algorithm.HMAC256("your-secret-key"))
 
                 // Return the JWT token to the user
-                call.respond(HttpStatusCode.Created, mapOf("token" to token, "message" to "User signed up successfully"))
+                call.respond(
+                    HttpStatusCode.Created,
+                    mapOf("token" to token, "message" to "User signed up successfully")
+                )
 
                 call.respond(HttpStatusCode.Created, "User signed up successfully")
             } catch (e: Exception) {
@@ -228,88 +216,143 @@ fun Application.configureRouting() {
 
         }
 
-       authenticate("jwt") {
-           post("/ClientPreferences") {
-               try {
-                   val userId = call.principal<UserIdPrincipal>()?.name
-                       ?: return@post call.respond(HttpStatusCode.Unauthorized, "Unauthorized")
-
-                   println("User ID (from token): $userId")
-
-                   var userPreferences = call.receive<UserPreferences>()
-                   userPreferences = userPreferences.copy(userId = userId)
-
-                   val userRepository = UserRepository()
-                   userRepository.createUserPreferences(userPreferences)
-                   call.respond(HttpStatusCode.Created, "User preferences saved successfully")
-               } catch (e: Exception) {
-                   call.respond(HttpStatusCode.InternalServerError, "Server error: ${e.message}")
-               }
-           }
-       }
-
-
-
         authenticate("jwt") {
-            put("/profile/info") {
-                val user = call.principal<UserIdPrincipal>()
-                if (user == null) {
-                    call.respond(HttpStatusCode.Unauthorized, "Not authenticated")
-                    return@put
-                }
-
-                val userId = user.name
-                val multipart = call.receiveMultipart()
-                var updatedProfile: UserProfile? = null
-                var profilePictureFile: String? = null
-
+            post("/clientPreferences") {
                 try {
+                    val userId = call.principal<UserIdPrincipal>()?.name
+                        ?: return@post call.respond(HttpStatusCode.Unauthorized, "Unauthorized")
+
+                    println("User ID (from token): $userId")
+
+                    var userPreferences = call.receive<UserPreferences>()
+                    userPreferences = userPreferences.copy(userId = userId)
+
+                    val userRepository = UserRepository()
+                    userRepository.createUserPreferences(userPreferences)
+                    call.respond(HttpStatusCode.Created, "User preferences saved successfully")
+                } catch (e: Exception) {
+                    call.respond(HttpStatusCode.InternalServerError, "Server error: ${e.message}")
+                }
+            }
+
+
+            post("/therapistDetails") {
+                try {
+                    val multipart = call.receiveMultipart()
+                    var certificateFile: String? = null
+                    var therapistDetails: TherapistDetails? = null
+
+                    val userId = call.principal<UserIdPrincipal>()?.name
+                        ?: return@post call.respond(HttpStatusCode.Unauthorized, "Unauthorized")
+
+                    println("User ID (from token): $userId")
+
                     multipart.forEachPart { part ->
                         when (part) {
-                            is PartData.FormItem -> {
-                                if (part.name == "profileData") {
-                                    updatedProfile = json.decodeFromString(part.value)
-                                }
-                            }
-
                             is PartData.FileItem -> {
-                                if (part.name == "profilePicture") {
-                                    profilePictureFile = part.save(Constants.PROFILE_PICTURE_DIRECTORY)
+                                if (part.name == "certificate") {
+                                    certificateFile = part.save(Constants.CERTIFICATE_IMAGE_DIRECTORY)
                                 }
                             }
 
-                            else -> Unit
+                            is PartData.FormItem -> {
+                                if (part.name == "therapistDetails") {
+                                    therapistDetails = Json.decodeFromString<TherapistDetails>(part.value)
+                                }
+                            }
+
+                            else -> {}
                         }
                         part.dispose()
                     }
-                } catch (ex: SerializationException) {
-                    call.respond(HttpStatusCode.BadRequest, "Invalid JSON format: ${ex.message}")
-                    return@put
-                } catch (ex: Exception) {
-                    ex.printStackTrace()
-                    call.respond(HttpStatusCode.InternalServerError, "Error processing request: ${ex.message}")
-                    return@put
-                }
 
-                if (updatedProfile == null) {
-                    call.respond(HttpStatusCode.BadRequest, "Invalid profile data")
-                    return@put
-                }
+                    // Validate that we received both therapistDetails and certificateFile
+                    if (therapistDetails == null || certificateFile == null) {
+                        return@post call.respond(HttpStatusCode.BadRequest, "Missing therapist details or certificate")
+                    }
 
-                val userRepository = UserRepository() // Consider dependency injection here
-                val profileToStore = updatedProfile!!.copy(userId = userId, profilePicturePath = profilePictureFile)
+                    val certificate = Certificate(
+                        path = certificateFile!!,
+                        uploadDate = Date().toString()
+                    )
 
-                val updatedSuccessfully = userRepository.updateUserProfile(userId, profileToStore)
+                    // Update therapistDetails with userId and certificateFile
+                    therapistDetails = therapistDetails!!.copy(
+                        userId = userId,
+                        certificate = certificate
+                    )
 
-
-                if (updatedSuccessfully) {
-                    call.respond(HttpStatusCode.OK, "Profile updated successfully")
-                } else {
-                    call.respond(HttpStatusCode.InternalServerError, "Error updating profile")
+                    val userRepository = UserRepository()
+                    userRepository.createTherapistDetails(therapistDetails!!)
+                    call.respond(HttpStatusCode.Created, "Therapist details saved successfully")
+                } catch (e: Exception) {
+                    e.printStackTrace() // This will print the full stack trace to your console
+                    call.respond(HttpStatusCode.InternalServerError, "Server error: ${e.message}")
                 }
             }
+
+
+            /*authenticate("jwt") {
+                put("/profile/info") {
+                    val user = call.principal<UserIdPrincipal>()
+                    if (user == null) {
+                        call.respond(HttpStatusCode.Unauthorized, "Not authenticated")
+                        return@put
+                    }
+
+                    val userId = user.name
+                    val multipart = call.receiveMultipart()
+                    var updatedProfile: UserProfile? = null
+                    var profilePictureFile: String? = null
+
+                    try {
+                        multipart.forEachPart { part ->
+                            when (part) {
+                                is PartData.FormItem -> {
+                                    if (part.name == "profileData") {
+                                        updatedProfile = json.decodeFromString(part.value)
+                                    }
+                                }
+
+                                is PartData.FileItem -> {
+                                    if (part.name == "profilePicture") {
+                                        profilePictureFile = part.save(Constants.PROFILE_PICTURE_DIRECTORY)
+                                    }
+                                }
+
+                                else -> Unit
+                            }
+                            part.dispose()
+                        }
+                    } catch (ex: SerializationException) {
+                        call.respond(HttpStatusCode.BadRequest, "Invalid JSON format: ${ex.message}")
+                        return@put
+                    } catch (ex: Exception) {
+                        ex.printStackTrace()
+                        call.respond(HttpStatusCode.InternalServerError, "Error processing request: ${ex.message}")
+                        return@put
+                    }
+
+                    if (updatedProfile == null) {
+                        call.respond(HttpStatusCode.BadRequest, "Invalid profile data")
+                        return@put
+                    } 
+
+                    val userRepository = UserRepository() // Consider dependency injection here
+                    val profileToStore = updatedProfile!!.copy(userId = userId, profilePicturePath = profilePictureFile)
+
+                    val updatedSuccessfully = userRepository.updateUserProfile(userId, profileToStore)
+
+
+                    if (updatedSuccessfully) {
+                        call.respond(HttpStatusCode.OK, "Profile updated successfully")
+                    } else {
+                        call.respond(HttpStatusCode.InternalServerError, "Error updating profile")
+                    }
+                }
+            }*/
         }
-        authenticate("jwt") {
+        /*authenticate("jwt") {
             put("/profile/therapistDetails") {
                 log.info("Accessing therapist details")
                 val user = call.principal<UserIdPrincipal>()
@@ -384,7 +427,7 @@ fun Application.configureRouting() {
                     call.respond(HttpStatusCode.InternalServerError, "Error updating therapist details or user profile")
                 }
             }
-        }
+        }}*/
         post("/login") {
             try {
                 val loginRequest = call.receive<LoginRequest>()
@@ -407,8 +450,9 @@ fun Application.configureRouting() {
 
                 // Generate JWT token
                 val token = JWT.create()
+                    .withClaim("userId", user.userId)
                     .withClaim("username", user.username)
-                    .withExpiresAt(Date(System.currentTimeMillis() +30L * 24 * 60 * 60 * 1000)) // 1 hour expiration
+                    .withExpiresAt(Date(System.currentTimeMillis() + 30L * 24 * 60 * 60 * 1000)) // 1-month expiration
                     .sign(Algorithm.HMAC256("your-secret-key"))
 
                 call.respond(HttpStatusCode.OK, mapOf("token" to token))
@@ -440,7 +484,7 @@ fun Application.configureRouting() {
 
 
 
-
+        authenticate("jwt") {
         post("/search/therapists") {
             try {
                 // Receive the filters from the request body
@@ -463,7 +507,29 @@ fun Application.configureRouting() {
             }
         }
 
-        authenticate("jwt") {
+
+        get("/all-therapists") {
+            try {
+                val userRepository = UserRepository()
+                val allTherapists = userRepository.getAllTherapists()
+                call.respond(HttpStatusCode.OK, allTherapists)
+            } catch (e: Exception) {
+                call.respond(HttpStatusCode.InternalServerError, "Error: ${e.message}")
+            }
+        }
+
+        // New route to get therapist count
+        get("/therapist-count") {
+            try {
+                val userRepository = UserRepository()
+                val count = userRepository.countTherapists()
+                call.respond(HttpStatusCode.OK, mapOf("count" to count))
+            } catch (e: Exception) {
+                call.respond(HttpStatusCode.InternalServerError, "Error: ${e.message}")
+            }
+        }
+
+
             post("/start-conversation") {
                 val userId = call.principal<UserIdPrincipal>()?.name
                     ?: return@post call.respond(HttpStatusCode.Unauthorized, "Unauthorized")
@@ -479,18 +545,19 @@ fun Application.configureRouting() {
                 }
 
                 val therapistId = conversationRequest.therapistId
+                  val sessionId = conversationRequest.sessionId
                 println("Therapist ID (from request): $therapistId")  // Debug: Log the therapistId
 
                 try {
                     // Call the repository to start or retrieve the conversation
                     val conversationRepository = ConversationRepository()
-                    val conversationId = conversationRepository.startConversation(userId, therapistId)
+                    val conversationId = conversationRepository.startConversation(userId, therapistId, sessionId)
 
                     // Respond with the created or existing conversation ID
                     if (conversationId != null) {
                         call.respond(HttpStatusCode.Created, mapOf("conversationId" to conversationId))
                     } else {
-                        call.respond(HttpStatusCode.InternalServerError, "Error: Conversation ID not created")
+                         call.respond(HttpStatusCode.Forbidden, "Cannot start conversation. Ensure the session is paid and active.")
                     }
                 } catch (e: Exception) {
                     println("Error starting conversation: ${e.message}")  // Debug: Log any error
@@ -543,14 +610,7 @@ fun Application.configureRouting() {
         }
 
 
-
-
-
-
-
-
-
-   authenticate ("jwt"){
+        /*
        get("/chat/history/{userId}") {
            val userId = call.parameters["userId"]
            val limit = call.request.queryParameters["limit"]?.toInt() ?: 20
@@ -560,64 +620,68 @@ fun Application.configureRouting() {
            val chatHistory = chatRepository.getChatHistory(userId!!, limit, offset)
            call.respond(HttpStatusCode.OK, chatHistory)
        }
-   }
+   }*/
 
 
 
 
-
-
-        get("/conversations/{userId}") {
-            val userId =
-                call.parameters["userId"] ?: return@get call.respond(HttpStatusCode.BadRequest, "Missing user ID")
-
-            val conversationRepository = ConversationRepository()
-            val conversations = conversationRepository.getConversationsForUser(userId)
-
-            if (conversations.isNotEmpty()) {
-                call.respond(HttpStatusCode.OK, conversations)
-            } else {
-                call.respond(HttpStatusCode.NotFound, "No conversations found for user")
-            }
-        }
-
-
-
-        get("/chat/history/{conversationId}") {
-            val conversationId = call.parameters["conversationId"] ?: return@get call.respond(
-                HttpStatusCode.BadRequest,
-                "Missing conversation ID"
-            )
-            val limit = call.request.queryParameters["limit"]?.toIntOrNull() ?: 50 // Default limit
-            val offset = call.request.queryParameters["offset"]?.toIntOrNull() ?: 0 // Default offset
-
-            val conversationRepository = ConversationRepository()
-            val chatHistory = conversationRepository.getChatHistory(conversationId, limit, offset)
-
-            if (chatHistory.isNotEmpty()) {
-                call.respond(HttpStatusCode.OK, chatHistory)
-            } else {
-                call.respond(HttpStatusCode.NotFound, "No chat history found")
-            }
-        }
 
         authenticate("jwt") {
-            post("/conversation/end/{conversationId}") {
-                val conversationId = call.parameters["conversationId"] ?: return@post call.respond(
-                    HttpStatusCode.BadRequest,
-                    "Missing conversation ID"
-                )
+            get("/conversations/{userId}") {
+                val userId =
+                    call.parameters["userId"] ?: return@get call.respond(HttpStatusCode.BadRequest, "Missing user ID")
 
                 val conversationRepository = ConversationRepository()
-                val isEnded = conversationRepository.endConversation(conversationId)
+                val conversations = conversationRepository.getConversationsForUser(userId)
 
-                if (isEnded) {
-                    call.respond(HttpStatusCode.OK, "Conversation ended successfully")
+                if (conversations.isNotEmpty()) {
+                    call.respond(HttpStatusCode.OK, conversations)
                 } else {
-                    call.respond(HttpStatusCode.InternalServerError, "Failed to end conversation")
+                    call.respond(HttpStatusCode.NotFound, "No conversations found for user")
                 }
             }
 
+
+
+            get("/chat/history/{conversationId}") {
+                val conversationId = call.parameters["conversationId"] ?: return@get call.respond(
+                    HttpStatusCode.BadRequest,
+                    "Missing conversation ID"
+                )
+                val limit = call.request.queryParameters["limit"]?.toIntOrNull() ?: 50 // Default limit
+                val offset = call.request.queryParameters["offset"]?.toIntOrNull() ?: 0 // Default offset
+
+                val conversationRepository = ConversationRepository()
+                val chatHistory = conversationRepository.getChatHistory(conversationId, limit, offset)
+
+                if (chatHistory.isNotEmpty()) {
+                    call.respond(HttpStatusCode.OK, chatHistory)
+                } else {
+                    call.respond(HttpStatusCode.NotFound, "No chat history found")
+                }
+
+
+
+                post("/conversation/end/{conversationId}") {
+                    val conversationId = call.parameters["conversationId"] ?: return@post call.respond(
+                        HttpStatusCode.BadRequest,
+                        "Missing conversation ID"
+                    )
+
+                    // Receive the request body
+                    val endRequest = call.receive<ConversationEndRequest>()
+
+                    val conversationRepository = ConversationRepository()
+                    val isEnded = conversationRepository.endConversation(conversationId)
+
+                    if (isEnded) {
+                        call.respond(HttpStatusCode.OK, "Conversation ended successfully")
+                    } else {
+                        call.respond(HttpStatusCode.InternalServerError, "Failed to end conversation")
+                    }
+                }
+
+            }
         }
 
 
@@ -630,8 +694,12 @@ fun Application.configureRouting() {
                     ?: return@post call.respond(HttpStatusCode.Unauthorized, "Unauthorized")
 
                 try {
+                    // Log the received JSON
+                    val receivedJson = call.receiveText()
+                    log.info("Received JSON: $receivedJson")
+
                     // Receive the journal entry payload
-                    val journalEntry = call.receive<ClientJournalEntry>()
+                    val journalEntry = json.decodeFromString<ClientJournalEntry>(receivedJson)
 
                     // Add the userId to the journal entry
                     val newJournalEntry = journalEntry.copy(userId = userId)
@@ -646,11 +714,15 @@ fun Application.configureRouting() {
                     }
                 } catch (e: Exception) {
                     // If any error occurs, log it and respond with a bad request
-                    log.error("Invalid journal entry data: ${e.message}")
-                    call.respond(HttpStatusCode.BadRequest, "Invalid journal entry data: ${e.message}")
+                    log.error("Invalid journal entry data", e)
+                    call.respond(
+                        HttpStatusCode.BadRequest,
+                        "Invalid journal entry data: ${e.message}\n${e.stackTraceToString()}"
+                    )
                     return@post
                 }
             }
+
 
             // Route to retrieve journal entries for clients
             get("/journal/entries") {
@@ -662,40 +734,37 @@ fun Application.configureRouting() {
                 val journalEntries = notesRepository.getJournalEntries(userId)
                 call.respond(HttpStatusCode.OK, journalEntries)
             }
+        }
 
-            // Route to add a therapist note
+        authenticate("jwt") {
             post("/therapist/note") {
                 val therapistId = call.principal<UserIdPrincipal>()?.name
                     ?: return@post call.respond(HttpStatusCode.Unauthorized, "Unauthorized")
 
-                val therapistNote = try {
-                    call.receive<TherapistNote>()
-                } catch (e: SerializationException) {
-                    log.error("Invalid JSON format: ${e.message}")
-                    return@post call.respond(HttpStatusCode.BadRequest, "Invalid JSON format: ${e.message}")
+                try {
+                    val therapistNote = call.receive<TherapistNote>()
+                    val newNote = therapistNote.copy(therapistId = therapistId)
+
+                    if (therapistNote.diagnosis == null && therapistNote.generalNotes == null) {
+                        return@post call.respond(
+                            HttpStatusCode.BadRequest,
+                            "Either diagnosis or general notes must be provided."
+                        )
+                    }
+
+                    val notesRepository = TherapistNoteRepository()
+                    val isAdded = notesRepository.saveTherapistNote(newNote)
+                    if (isAdded) {
+                        call.respond(HttpStatusCode.Created, "Therapist note added successfully")
+                    } else {
+                        call.respond(HttpStatusCode.InternalServerError, "Failed to add therapist note")
+                    }
                 } catch (e: Exception) {
-                    log.error("Invalid therapist note data: ${e.message}")
-                    return@post call.respond(HttpStatusCode.BadRequest, "Invalid therapist note data: ${e.message}")
-                }
-
-                // Ensure that personal notes are not included in this request
-                val newNote = therapistNote.copy(therapistId = therapistId)
-
-                // This may be a check to ensure that `diagnosis` and `generalNotes` are provided
-                if (therapistNote.diagnosis == null && therapistNote.generalNotes == null) {
-                    return@post call.respond(
-                        HttpStatusCode.BadRequest,
-                        "Either diagnosis or general notes must be provided."
-                    )
-                }
-
-                val isAdded = notesRepository.addTherapistNote(newNote)
-                if (isAdded) {
-                    call.respond(HttpStatusCode.Created, "Therapist note added successfully")
-                } else {
-                    call.respond(HttpStatusCode.InternalServerError, "Failed to add therapist note")
+                    call.respond(HttpStatusCode.BadRequest, "Invalid therapist note data: ${e.message}")
                 }
             }
+
+
             // Route to retrieve therapist notes related to a specific user
             get("/therapist/notes/{userId}") {
                 val therapistId = call.principal<UserIdPrincipal>()?.name ?: return@get call.respond(
@@ -709,237 +778,110 @@ fun Application.configureRouting() {
                 call.respond(HttpStatusCode.OK, therapistNotes)
             }
 
-            // Route to post a new personal note (not related to a client)
-            // Route to post a new personal note (not related to a client)
-            post("/therapist/note/personal") {
-                val therapistId = call.principal<UserIdPrincipal>()?.name
-                    ?: return@post call.respond(HttpStatusCode.Unauthorized, "Unauthorized")
 
-                try {
-                    // Receive the JSON request body
-                    val therapistNote = call.receive<TherapistNote>()
+            /*post("/therapist/note/personal") {
+            val therapistId = call.principal<UserIdPrincipal>()?.name
+                ?: return@post call.respond(HttpStatusCode.Unauthorized, "Unauthorized")
 
-                    // Check if personal notes are provided; if not, you can handle it as needed
-                    if (therapistNote.personalNotes.isNullOrEmpty()) {
-                        return@post call.respond(HttpStatusCode.BadRequest, "Personal notes must be provided if required.")
-                    }
+            try {
+                // Receive the JSON request body as PersonalNoteRequest
+                val receivedNote = call.receive<PersonalNoteRequest>()
 
-                    // Create a new personal note, ignoring userId
-                    val newPersonalNote = TherapistNote(
-                        therapistId = therapistId, // Use authenticated therapistId
-                        userId = null, // Explicitly set to null for personal notes
-                        diagnosis = therapistNote.diagnosis, // Optional
-                        generalNotes = therapistNote.generalNotes, // Optional
-                        personalNotes = therapistNote.personalNotes // Can be null
+                // Check if personal notes are provided
+                if (receivedNote.personalNotes.isBlank()) {
+                    return@post call.respond(HttpStatusCode.BadRequest, "Personal notes must be provided.")
+                }
+
+                // Create a new TherapistNote for personal note
+                val newPersonalNote = TherapistNote(
+                    therapistId = therapistId,
+                    userId = null, // Explicitly set to null for personal notes
+
+                    personalNotes = receivedNote.personalNotes
+                )
+
+                // Save the personal note
+                val notesRepository = TherapistNoteRepository()
+                val isAdded = notesRepository.addTherapistNote(newPersonalNote)
+                if (isAdded) {
+                    call.respond(HttpStatusCode.Created, "Personal note added successfully")
+                } else {
+                    call.respond(HttpStatusCode.InternalServerError, "Failed to add personal note")
+                }
+            } catch (e: ContentTransformationException) {
+                log.error("Invalid JSON format: ${e.message}")
+                call.respond(HttpStatusCode.BadRequest, "Invalid JSON format: ${e.message}")
+            } catch (e: Exception) {
+                log.error("Invalid personal note data: ${e.message}")
+                call.respond(HttpStatusCode.BadRequest, "Invalid personal note data: ${e.message}")
+            }
+        }
+
+
+        // Route to get personal notes for the therapist
+        get("/therapist/notes/personal") {
+            val therapistId = call.principal<UserIdPrincipal>()?.name
+                ?: return@get call.respond(HttpStatusCode.Unauthorized, "Unauthorized")
+
+            val personalNotes = notesRepository.getPersonalNotes(therapistId)
+            call.respond(HttpStatusCode.OK, personalNotes)
+        }*/
+
+
+            // Booking route
+            post("/book-session") {
+                val request = call.receive<BookSessionRequest>()
+                val sessionRepository = SessionRepository()
+                 val paymentRepository = PaymentRepository()
+
+                val isAvailable = sessionRepository.checkTherapistAvailability(
+                    request.therapistId, request.sessionDateTime, request.duration
+                )
+
+                if (isAvailable) {
+                    val newSession = TherapySession(
+                        clientId = request.clientId,
+                        therapistId = request.therapistId,
+                        sessionDateTime = request.sessionDateTime,
+                        duration = request.duration,
+                        status = SessionStatus.SCHEDULED,
+                        cost = request.cost,
+                        paymentStatus = PaymentStatus.PENDING
                     )
 
-                    // Save the personal note
-                    val isAdded = notesRepository.addTherapistNote(newPersonalNote)
-                    if (isAdded) {
-                        call.respond(HttpStatusCode.Created, "Personal note added successfully")
+                    val sessionsCollection = DatabaseFactory.getSessionsCollection()
+                    sessionsCollection.insertOne(newSession)
+
+                    val paymentSuccessful = paymentRepository.processPayment(newSession.sessionId, newSession.cost)
+        if (paymentSuccessful) {
+            sessionRepository.updatePaymentStatus(newSession.sessionId, PaymentStatus.PAID)
+            call.respond(HttpStatusCode.Created, newSession)
+        } else {
+            sessionsCollection.deleteOneById(newSession.sessionId)
+            call.respond(HttpStatusCode.PaymentRequired, "Payment failed")
+        }
+    } else {
+        call.respond(HttpStatusCode.Conflict, "Therapist is not available at the requested time.")
+    }
+}
+
+
+
+            get("/sessions/{sessionId}") {
+                val sessionIdParam = call.parameters["sessionId"]
+                if (sessionIdParam != null) {
+                    val sessionId = sessionIdParam
+                    val sessionRepository = SessionRepository()
+                    val session = sessionRepository.getSessionById(sessionId)
+                    if (session != null) {
+                        call.respond(HttpStatusCode.OK, session)
                     } else {
-                        call.respond(HttpStatusCode.InternalServerError, "Failed to add personal note")
+                        call.respond(HttpStatusCode.NotFound, "Session not found.")
                     }
-                } catch (e: SerializationException) {
-                    log.error("Invalid JSON format: ${e.message}")
-                    call.respond(HttpStatusCode.BadRequest, "Invalid JSON format: ${e.message}")
-                } catch (e: Exception) {
-                    log.error("Invalid personal note data: ${e.message}")
-                    call.respond(HttpStatusCode.BadRequest, "Invalid personal note data: ${e.message}")
-                }
-            }
-            // Route to get personal notes for the therapist
-            get("/therapist/notes/personal") {
-                val therapistId = call.principal<UserIdPrincipal>()?.name
-                    ?: return@get call.respond(HttpStatusCode.Unauthorized, "Unauthorized")
-
-                val personalNotes = notesRepository.getPersonalNotes(therapistId)
-                call.respond(HttpStatusCode.OK, personalNotes)
-            }}
-
-
-        /*post("/appointments/book") {
-            try {
-                // Read the incoming request body as text first
-                val jsonData = call.receiveText() // Get raw JSON text
-                log.info("Received JSON data: $jsonData") // Log the raw JSON
-
-                // Now parse the JSON into the Appointment object
-                val appointment: Appointment = try {
-                    Json.decodeFromString<Appointment>(jsonData) // Decode using Kotlin Serialization
-                } catch (e: Exception) {
-                    log.error("Invalid appointment data: ${e.message}")
-                    call.respond(HttpStatusCode.BadRequest, "Invalid appointment data: ${e.message}")
-                    return@post
-                }
-
-                val sessionRepository = SessionRepository()
-
-                // Log the therapistId from the appointment request
-                log.info("Received appointment request for therapistId: ${appointment.therapistId}")
-
-                // Fetch therapist details
-                val therapistDetails = sessionRepository.getTherapistDetails(appointment.therapistId)
-
-                // Check if therapist details were found
-                if (therapistDetails == null) {
-                    log.error("Therapist not found with ID: ${appointment.therapistId}")
-                    call.respond(HttpStatusCode.NotFound, "Therapist not found.")
-                    return@post
-                }
-
-                // Log the therapist availability check
-                log.info("Checking therapist availability for ${therapistDetails.userId} on ${appointment.dateTime}")
-
-                // Check if the therapist is available at the requested time
-                if (!sessionRepository.isTherapistAvailable(therapistDetails.userId, appointment.dateTime)) {
-                    call.respond(HttpStatusCode.Conflict, "Therapist is not available at the requested time.")
-                    return@post
-                }
-
-                // Calculate the total cost based on the therapist's cost and the appointment duration
-                val totalCost = sessionRepository.calculateCost(therapistDetails.cost, appointment.duration)
-
-                // Create the new Appointment instance
-                val newAppointment = appointment.copy(
-                    totalCost = totalCost,
-                    status = "confirmed"
-                )
-
-                // Attempt to book the appointment
-                val isBooked = sessionRepository.bookAppointment(newAppointment)
-
-                // Respond based on the booking success
-                if (isBooked) {
-                    log.info("Appointment successfully booked for ${newAppointment.dateTime} with therapist ${therapistDetails.userId}")
-                    call.respondText("Appointment booked successfully for ${newAppointment.dateTime} at a cost of ${newAppointment.totalCost}")
                 } else {
-                    log.error("Failed to book appointment for ${newAppointment.dateTime}")
-                    call.respond(HttpStatusCode.InternalServerError, "Failed to book appointment.")
+                    call.respond(HttpStatusCode.BadRequest, "Session ID is required.")
                 }
-            } catch (e: Exception) {
-                log.error("Error processing appointment booking: ${e.message}")
-                call.respond(HttpStatusCode.InternalServerError, "Server error: ${e.message}")
             }
-        }*/
-        // Booking route
-        post("/book-session") {
-            val request = call.receive<BookSessionRequest>()
-            val sessionRepository = SessionRepository()
-
-            val isAvailable = sessionRepository.checkTherapistAvailability(
-                request.therapistId, request.sessionDateTime, request.duration
-            )
-
-            if (isAvailable) {
-                val newSession = TherapySession(
-                    clientId = request.clientId,
-                    therapistId = request.therapistId,
-                    sessionDateTime = request.sessionDateTime,
-                    duration = request.duration,
-                    status = SessionStatus.SCHEDULED,
-                    cost = request.cost
-                )
-
-                val sessionsCollection = DatabaseFactory.getSessionsCollection()
-                sessionsCollection.insertOne(newSession)
-
-                call.respond(HttpStatusCode.Created, newSession)
-            } else {
-                call.respond(HttpStatusCode.Conflict, "Therapist is not available at the requested time.")
-            }
-        }
-
-// Cancellation route
-
-            authenticate("jwt") {
-                delete("/sessions/cancel") {
-                    try {
-                        // Receive the cancellation request
-                        val request = call.receive<CancelSessionRequest>()
-                        val sessionRepository = SessionRepository()
-
-                        // Check if the session exists
-                        val session = sessionRepository.getSessionById(request.sessionId)
-                        if (session == null) {
-                            call.respond(HttpStatusCode.NotFound, "Session not found.")
-                            return@delete
-                        }
-
-                        // Check session status
-                        if (session.status != SessionStatus.SCHEDULED) {
-                            call.respond(HttpStatusCode.Conflict, "Session cannot be canceled as it is already completed or canceled.")
-                            return@delete
-                        }
-
-                        // Attempt to cancel the session
-                        val isCanceled = sessionRepository.cancelSession(request.sessionId)
-                        if (isCanceled) {
-                            call.respond(HttpStatusCode.NoContent) // 204 No Content for successful delete
-                        } else {
-                            call.respond(HttpStatusCode.InternalServerError, "Failed to cancel session.")
-                        }
-                    } catch (e: Exception) {
-                        call.respond(HttpStatusCode.InternalServerError, "Server error: ${e.message}")
-                    }
-                }
-        }
-
-
-
-
-        /*post("/cancel-session") {
-            val request = call.receive<CancelSessionRequest>()
-            val sessionRepository = SessionRepository()
-
-            // Check if the session exists
-            val session = sessionRepository.getSessionById(request.sessionId)
-            if (session != null && session.status == SessionStatus.SCHEDULED) {
-                // Proceed with cancellation
-                val updatedSession = sessionRepository.cancelSession(request.sessionId)
-                call.respond(HttpStatusCode.OK, updatedSession)
-            } else {
-                call.respond(HttpStatusCode.NotFound, "Session not found or already canceled.")
-            }
-        }*/
-
-
-
-        delete("/cancel-session/{sessionId}") {
-            val sessionIdParam = call.parameters["sessionId"]
-
-            if (sessionIdParam != null) {
-                // Convert the string sessionId to ObjectId and handle potential errors
-                val sessionId = try {
-                    ObjectId(sessionIdParam)
-                } catch (e: IllegalArgumentException) {
-                    call.respond(HttpStatusCode.BadRequest, "Invalid session ID format.")
-                    return@delete
-                }
-
-                val sessionsCollection = DatabaseFactory.getSessionsCollection()
-
-                // Use explicit type for the delete operation
-                val deleteResult = sessionsCollection.deleteOne(eq("_id", sessionId))
-
-                // Log the result for debugging
-                println("Attempting to delete session with ID: $sessionIdParam")
-                println("Deleted count: ${deleteResult.deletedCount}")
-
-                if (deleteResult.deletedCount > 0) {
-                    call.respond(HttpStatusCode.NoContent) // 204 No Content if successfully deleted
-                } else {
-                    call.respond(HttpStatusCode.NotFound, "Session not found or already cancelled.")
-                }
-            } else {
-                call.respond(HttpStatusCode.BadRequest, "Session ID must be provided.")
-            }
-        }
-
-
-
-
-
 
 
 
@@ -947,35 +889,61 @@ fun Application.configureRouting() {
 
 
             put("/sessions/{sessionId}/cancel") {
-                // Get the session ID from the URL path parameters
                 val sessionIdParam = call.parameters["sessionId"]
                     ?: return@put call.respond(HttpStatusCode.BadRequest, "Session ID is required.")
 
                 try {
-                    // Use sessionId directly (assuming it's a String)
                     val sessionId = sessionIdParam
-
                     val sessionRepository = SessionRepository()
-                    // Fetch the session by sessionId
-                   // val session = sessionRepository.getSessionById(sessionId)
+                    val paymentRepository = PaymentRepository()
 
+                    val session = sessionRepository.getSessionById(sessionId)
+                    if (session == null) {
+                        call.respond(HttpStatusCode.NotFound, "Session not found.")
+                        return@put
+                    }
 
-                    // Cancel the session (no session not found condition)
+                    // Check if the session is eligible for cancellation (e.g., not already canceled, not in the past)
+                    if (session.status == SessionStatus.CANCELLED) {
+                        call.respond(HttpStatusCode.BadRequest, "Session is already canceled.")
+                        return@put
+                    }
+
+                    // Check if the session is in the future
+                    val sessionDateTime = Instant.parse(session.sessionDateTime)
+                    if (sessionDateTime.isBefore(Instant.now())) {
+                        call.respond(HttpStatusCode.BadRequest, "Cannot cancel a session that has already occurred.")
+                        return@put
+                    }
+
+                    // Cancel the session
                     val isCanceled = sessionRepository.cancelSession(sessionId)
 
                     if (isCanceled) {
-                        // Respond with success if the session is canceled
-                        call.respond(HttpStatusCode.OK, "Session canceled successfully.")
+                        // If the session was paid, process the refund
+                        if (session.paymentStatus == PaymentStatus.PAID) {
+                            val isRefunded = paymentRepository.refundPayment(sessionId)
+                            if (isRefunded) {
+                                sessionRepository.updatePaymentStatus(sessionId, PaymentStatus.REFUNDED)
+                                call.respond(HttpStatusCode.OK, "Session canceled and payment refunded successfully.")
+                            } else {
+                                // If refund fails, still cancel the session but notify about refund failure
+                                call.respond(HttpStatusCode.OK, "Session canceled successfully, but refund failed. Please contact support.")
+                            }
+                        } else {
+                            call.respond(HttpStatusCode.OK, "Session canceled successfully.")
+                        }
                     } else {
-                        // If canceling failed, return 500 Internal Server Error
                         call.respond(HttpStatusCode.InternalServerError, "Failed to cancel session.")
                     }
-                } catch (e: Exception) {
-                    // Handle invalid sessionId format or any other error
-                    println("Error: ${e.message}")
+                } catch (e: IllegalArgumentException) {
                     call.respond(HttpStatusCode.BadRequest, "Invalid session ID format.")
+                } catch (e: Exception) {
+                    call.respond(HttpStatusCode.InternalServerError, "An error occurred: ${e.message}")
                 }
             }
+        }
+
 
 
 
@@ -1014,5 +982,10 @@ fun Application.configureRouting() {
 
         // Static plugin. Try to access `/static/index.html`
         staticResources("/static", "static")
-    }
-}
+
+
+    }}
+
+
+
+

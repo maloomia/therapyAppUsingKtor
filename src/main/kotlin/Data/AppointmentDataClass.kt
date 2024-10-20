@@ -26,7 +26,8 @@ data class TherapySession(
     val sessionDateTime: String, // Scheduled date and time of the session (ISO 8601 format)
     val duration: Int, // Duration in minutes
     val status: SessionStatus, // Status of the session (e.g., Scheduled, Completed, Cancelled)
-    val cost: Double // Cost of the therapy session
+    val cost: Double, // Cost of the therapy session
+    val paymentStatus: PaymentStatus = PaymentStatus.PENDING
 )
 
 enum class SessionStatus {
@@ -34,6 +35,8 @@ enum class SessionStatus {
     COMPLETED,
     CANCELLED
 }
+
+
 
 
 @Serializable
@@ -50,5 +53,5 @@ data class BookSessionRequest(
 @Serializable
 data class CancelSessionRequest(
     @SerialName("_id")
-    val sessionId: String, // Define a data class to receive the session ID
+    val sessionId: String= ObjectId().toHexString() // Define a data class to receive the session ID
 )

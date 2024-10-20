@@ -13,7 +13,6 @@ data class UserSignUpRequest(
     val username: String,
     val email: String,
     val password: String,
-    val confirmPassword: String,
     val isTherapist: Boolean // Indicates if the user is a therapist
 )
 
@@ -34,6 +33,13 @@ data class Certificate(
     val uploadDate: String // Date when the certificate was uploaded
 )
 
+@Serializable
+data class Availability(
+    val dayOfWeek: Int, // 1 (Monday) to 7 (Sunday)
+    val startTime: String, // Format: "HH:mm"
+    val endTime: String // Format: "HH:mm"
+)
+
 
 @Serializable
 data class TherapistDetails(
@@ -47,9 +53,9 @@ data class TherapistDetails(
     val clientTypes: List<String>, // Types of clients they work with (e.g., children, couples, families)
     val issuesTreated: List<String>, // Issues they work with (e.g., anxiety disorders, depression)
     val treatmentApproaches: List<String>, // Approaches they use in therapy (e.g., CBT, DBT)
-    val profilePicturePath: String? = null,
+   
     val cost: Double, // Cost of the therapy session
-    val availability: String, // Availability of the therapist
+  val availability: List<Availability>,
     val gender: String // Gender of the therapist
 )
 

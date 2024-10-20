@@ -33,18 +33,29 @@ class ConversationRepository {
             Conversation::conversationId eq conversationId,
             push(Conversation::messages, message)
         )
-        return updateResult.modifiedCount > 0  // Returns true if the message was successfully added
+        return updateResult.modifiedCount > 0
     }
 
 
 
 
 
-    suspend fun startConversation(userId: String, therapistId: String): String? {
+    suspend fun startConversation(userId: String, therapistId: String, sessionId: String): String? {
         try {
-            // Check if a conversation between the user and therapist already exists
+            // First, check if the session is paid and active
+            val sessionRepository = SessionRepository()
+            if (!sessionRepository.isSessionPaidAndActive(sessionId)) {
+                println("Session is not paid or active for sessionId: $sessionId")
+                return null
+            }
+
+            // Check if a conversation between the user and therapist already exists for this session
             val existingConversation = conversationCollection.findOne(
-                and(Conversation::userId eq userId, Conversation::therapistId eq therapistId)
+                and(
+                    Conversation::userId eq userId,
+                    Conversation::therapistId eq therapistId,
+                    Conversation::sessionId eq sessionId
+                )
             )
 
             // If a conversation exists, return its ID without creating a new one
@@ -58,7 +69,8 @@ class ConversationRepository {
             val newConversation = Conversation(
                 conversationId = conversationId,
                 userId = userId,
-                therapistId = therapistId
+                therapistId = therapistId,
+                sessionId = sessionId
             )
 
             // Save the conversation to the database and ensure it was acknowledged
@@ -161,5 +173,6 @@ class ConversationRepository {
 
 
 }
+
 
 

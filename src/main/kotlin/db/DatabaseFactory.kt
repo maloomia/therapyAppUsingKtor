@@ -63,4 +63,8 @@ object DatabaseFactory {
         return database.getCollection("sessions") // Ensure this is set up in your DatabaseFactory
     }
 
+     fun getPaymentsCollection(): CoroutineCollection<Payment> {
+        return database.getCollection("payments")
+    }
+
 }

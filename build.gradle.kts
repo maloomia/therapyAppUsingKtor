@@ -48,6 +48,7 @@ dependencies {
 
         implementation("org.litote.kmongo:kmongo-coroutine:4.3.0")   // Use the latest version of KMongo
 
+implementation("ch.qos.logback:logback-classic:$logback_version")
 
 
 
