@@ -11,6 +11,14 @@ import org.litote.kmongo.coroutine.*
 import org.litote.kmongo.eq
 import org.litote.kmongo.setValue
 import org.slf4j.LoggerFactory
+import kotlinx.serialization.Serializable
+
+
+@Serializable
+data class UserTherapistDetails(
+    val name: String?,
+    val details: TherapistDetails
+)
 
 class UserRepository {
     private val usersCollection = DatabaseFactory.getUsersCollection()
@@ -101,24 +109,23 @@ class UserRepository {
     }
 
 
-    suspend fun searchTherapists(filters: SearchFilters): List<Map<String, Any?>> {
-        val query = mutableListOf<Bson>()
+    suspend fun searchTherapists(filters: SearchFilters): List<UserTherapistDetails> {
+        val therapistQuery = mutableListOf<Bson>()
+        val userQuery = mutableListOf<Bson>()
 
         // Apply the name filter if provided
         filters.name?.let {
-            filters.name.let {
-                query.add(UserSignUpRequest::name.regex(".*${it}.*", "i"))  // Case-insensitive search by name
-            } // Case-insensitive search by name
+            userQuery.add(UserSignUpRequest::name.regex(".*${it}.*", "i"))
         }
 
         // Apply specialties filter if provided
         filters.specialties?.let {
-            query.add(TherapistDetails::specialty `in` it)
+            therapistQuery.add(TherapistDetails::specialty `in` it)
         }
 
         // Apply cost filter if provided
         filters.cost?.let {
-            query.add(TherapistDetails::cost lte it)
+            therapistQuery.add(TherapistDetails::cost lte it)
         }
 
         // Apply availability filter if provided
@@ -126,7 +133,7 @@ class UserRepository {
             logger.info("Applying availability filter: $availabilityString")
             val (dayOfWeek, startTime, endTime) = parseAvailability(availabilityString)
 
-            query.add(
+            therapistQuery.add(
                 TherapistDetails::availability.elemMatch(
                     and(
                         Availability::dayOfWeek eq dayOfWeek,
@@ -141,23 +148,39 @@ class UserRepository {
 
         // Apply gender filter if provided
         filters.gender?.let {
-            query.add(TherapistDetails::gender eq it)
+            therapistQuery.add(TherapistDetails::gender eq it)
+        }
+
+        // Get matching user IDs based on name filter
+        val matchingUserIds = if (userQuery.isNotEmpty()) {
+            usersCollection.find(and(userQuery)).toList().map { it.userId }
+        } else {
+            null
+        }
+        println("==========================================================================")
+        println(matchingUserIds)
+
+        // Add user ID filter to therapist query if name filter was applied
+        matchingUserIds?.let {
+            therapistQuery.add(Filters.`in`("_id", it))
         }
 
         // Execute the query and get the therapist details
-        val therapistsDetails = therapistDetailsCollection.find(and(query)).toList()
+        val therapistsDetails = therapistDetailsCollection.find(and(therapistQuery)).toList()
 
         // Now, retrieve the associated name from the usersCollection
         return therapistsDetails.map { therapist ->
-            val user = usersCollection.findOne(UserSignUpRequest::userId eq therapist.userId)
+            val user = usersCollection.findOneById(therapist.userId)
 
             // Log the fetched user
             println("Fetched user for userId ${therapist.userId}: $user")
 
-            mapOf(
-                "name" to user?.name,
-                "details" to therapist
+            val userDetails = UserTherapistDetails(
+                name = user?.name,
+                details = therapist
             )
+
+            userDetails
         }
     }
 
