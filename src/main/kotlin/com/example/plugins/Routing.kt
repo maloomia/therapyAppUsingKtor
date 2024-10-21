@@ -336,7 +336,7 @@ fun Application.configureRouting() {
                     if (updatedProfile == null) {
                         call.respond(HttpStatusCode.BadRequest, "Invalid profile data")
                         return@put
-                    } 
+                    }
 
                     val userRepository = UserRepository() // Consider dependency injection here
                     val profileToStore = updatedProfile!!.copy(userId = userId, profilePicturePath = profilePictureFile)
@@ -452,6 +452,9 @@ fun Application.configureRouting() {
                 val token = JWT.create()
                     .withClaim("userId", user.userId)
                     .withClaim("username", user.username)
+                    .withClaim("isTherapist", user.isTherapist)
+                    .withClaim("email", user.email)
+                    .withClaim("name", user.name)
                     .withExpiresAt(Date(System.currentTimeMillis() + 30L * 24 * 60 * 60 * 1000)) // 1-month expiration
                     .sign(Algorithm.HMAC256("your-secret-key"))
 
@@ -985,7 +988,3 @@ fun Application.configureRouting() {
 
 
     }}
-
-
-
-
